@@ -10,12 +10,14 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
 import { useConfirm } from "../../hooks/Confirm";
 import Box from "@mui/material/Box";
 import { useAllTextStyles, useStyleList } from "../../hooks/CustomStyles";
 import { css } from "@emotion/css";
 import { getRandomQuote } from "../../config/quotes";
 import { useSetting } from "../../hooks/Setting";
+import { OPT_STYLE_ALL } from "../../config/styles";
 
 /**
  * 单个自定义 CSS 样式编辑表单区域
@@ -24,9 +26,16 @@ import { useSetting } from "../../hooks/Setting";
  * @param {Object} props.customStyle - 样式对象配置
  * @param {Function} props.deleteStyle - 删除样式回调
  * @param {Function} props.updateStyle - 保存/更新样式回调
- * @param {boolean} props.isBuiltin - 是否是系统内置的只读样式 (内置样式不允许修改和删除)
+ * @param {boolean} props.isBuiltin - 是否是系统内置样式（可编辑覆盖，支持恢复默认）
+ * @param {boolean} props.isOverridden - 系统内置样式是否已被用户覆盖编辑过
  */
-function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
+function StyleFields({
+  customStyle,
+  deleteStyle,
+  updateStyle,
+  isBuiltin,
+  isOverridden = false,
+}) {
   const i18n = useI18n();
   const {
     setting: { uiLang },
@@ -67,10 +76,10 @@ function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
     updateStyle(customStyle.styleSlug, formData);
   };
 
-  // 二次确认删除自定义样式
+  // 二次确认删除自定义样式 / 恢复内置样式默认值
   const handleDelete = async () => {
     const isConfirmed = await confirm({
-      confirmText: i18n("delete"),
+      confirmText: isBuiltin ? i18n("restore_default") : i18n("delete"),
       cancelText: i18n("cancel"),
     });
 
@@ -114,7 +123,6 @@ function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
         name="styleName"
         value={styleName}
         onChange={handleChange}
-        disabled={isBuiltin}
       />
       {/* CSS 源码编辑器 */}
       <CodeField
@@ -124,26 +132,36 @@ function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
         value={styleCode}
         onChange={handleChange}
         maxRows={10}
-        disabled={isBuiltin}
       />
 
-      {/* 非只读的自定义样式，提供保存和删除动作按钮 */}
-      {!isBuiltin && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={2}
-          useFlexGap
-          flexWrap="wrap"
+      {/* 保存按钮；内置样式支持“恢复默认”，自定义样式支持删除 */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        useFlexGap
+        flexWrap="wrap"
+      >
+        <Button
+          size="small"
+          variant="contained"
+          onClick={handleSave}
+          disabled={!isModified}
         >
-          <Button
-            size="small"
-            variant="contained"
-            onClick={handleSave}
-            disabled={!isModified}
-          >
-            {i18n("save")}
-          </Button>
+          {i18n("save")}
+        </Button>
+        {isBuiltin ? (
+          isOverridden && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={handleDelete}
+            >
+              {i18n("restore_default")}
+            </Button>
+          )
+        ) : (
           <Button
             size="small"
             variant="outlined"
@@ -152,8 +170,8 @@ function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
           >
             {i18n("delete")}
           </Button>
-        </Stack>
-      )}
+        )}
+      </Stack>
     </Stack>
   );
 }
@@ -161,8 +179,15 @@ function StyleFields({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
 /**
  * 样式的折叠手风琴壳组件
  */
-function StyleAccordion({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
+function StyleAccordion({
+  customStyle,
+  deleteStyle,
+  updateStyle,
+  isBuiltin,
+  isOverridden = false,
+}) {
   const [expanded, setExpanded] = useState(false);
+  const i18n = useI18n();
 
   const handleChange = (e) => {
     setExpanded((pre) => !pre);
@@ -171,13 +196,29 @@ function StyleAccordion({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
   return (
     <Accordion expanded={expanded} onChange={handleChange}>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-        <Typography
-          sx={{
-            overflowWrap: "anywhere",
-          }}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          useFlexGap
+          sx={{ flex: 1, minWidth: 0 }}
         >
-          {`${customStyle.styleName}`}
-        </Typography>
+          <Typography sx={{ flex: 1, overflowWrap: "anywhere" }}>
+            {`${customStyle.styleName}`}
+          </Typography>
+          {!expanded && (
+            <Button
+              size="small"
+              startIcon={<EditIcon />}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded(true);
+              }}
+            >
+              {i18n("edit")}
+            </Button>
+          )}
+        </Stack>
       </AccordionSummary>
       <AccordionDetails>
         {expanded && (
@@ -186,6 +227,7 @@ function StyleAccordion({ customStyle, deleteStyle, updateStyle, isBuiltin }) {
             deleteStyle={deleteStyle}
             updateStyle={updateStyle}
             isBuiltin={isBuiltin}
+            isOverridden={isOverridden}
           />
         )}
       </AccordionDetails>
@@ -200,8 +242,13 @@ export default function StylesSetting() {
   const i18n = useI18n();
   // 自定义 CSS 列表 Hook
   const { customStyles, addStyle, deleteStyle, updateStyle } = useStyleList();
-  // 系统内置的只读样式配置列表
+  // 系统内置样式列表（已合并用户的覆盖编辑）
   const { builtinStyles } = useAllTextStyles();
+  // 已被用户覆盖编辑过的内置样式集合
+  const overrideSlugs = useMemo(
+    () => new Set(customStyles.map((item) => item.styleSlug)),
+    [customStyles]
+  );
 
   // 添加新 CSS 样式
   const handleClick = (e) => {
@@ -227,16 +274,18 @@ export default function StylesSetting() {
 
         {/* 用户自定义的可修改样式列表 */}
         <Box>
-          {customStyles.map((customStyle) => (
-            <StyleAccordion
-              key={customStyle.styleSlug}
-              customStyle={customStyle}
-              deleteStyle={deleteStyle}
-              updateStyle={updateStyle}
-            />
-          ))}
+          {customStyles
+            .filter((item) => !OPT_STYLE_ALL.includes(item.styleSlug))
+            .map((customStyle) => (
+              <StyleAccordion
+                key={customStyle.styleSlug}
+                customStyle={customStyle}
+                deleteStyle={deleteStyle}
+                updateStyle={updateStyle}
+              />
+            ))}
         </Box>
-        {/* 插件内置的只读系统样式列表 */}
+        {/* 插件内置系统样式列表（可编辑覆盖） */}
         <Box>
           {builtinStyles.map((customStyle) => (
             <StyleAccordion
@@ -245,6 +294,7 @@ export default function StylesSetting() {
               deleteStyle={deleteStyle}
               updateStyle={updateStyle}
               isBuiltin={true}
+              isOverridden={overrideSlugs.has(customStyle.styleSlug)}
             />
           ))}
         </Box>
