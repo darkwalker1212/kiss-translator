@@ -48,15 +48,37 @@ export function useStyleList() {
     [updateSetting]
   );
 
-  // 更新特定自定义样式的属性数据（例如 styleName 或 styleCode 等）
+  // 更新特定样式的属性数据（例如 styleName 或 styleCode 等）。
+  // 若目标是系统内置样式（如 under_line），首次编辑时会把覆盖配置写入
+  // customStyles，后续翻译渲染会优先使用覆盖后的 CSS。
   const updateStyle = useCallback(
     (styleSlug, updateData) => {
-      updateSetting((prev) => ({
-        ...prev,
-        customStyles: (prev?.customStyles || []).map((item) =>
-          item.styleSlug === styleSlug ? { ...item, ...updateData } : item
-        ),
-      }));
+      updateSetting((prev) => {
+        const customStyles = prev?.customStyles || [];
+        const exists = customStyles.some(
+          (item) => item.styleSlug === styleSlug
+        );
+        if (exists) {
+          return {
+            ...prev,
+            customStyles: customStyles.map((item) =>
+              item.styleSlug === styleSlug ? { ...item, ...updateData } : item
+            ),
+          };
+        }
+        // 内置样式第一次编辑时生成覆盖条目
+        const base = OPT_STYLE_ALL.includes(styleSlug)
+          ? {
+              styleSlug,
+              styleName: "",
+              styleCode: builtinStylesMap[styleSlug] || "",
+            }
+          : {};
+        return {
+          ...prev,
+          customStyles: [...customStyles, { ...base, ...updateData }],
+        };
+      });
     },
     [updateSetting]
   );
@@ -76,20 +98,32 @@ export function useAllTextStyles() {
   const { customStyles } = useStyleList();
   const i18n = useI18n();
 
-  // 获取本地化的系统内置文本样式列表
-  const builtinStyles = useMemo(
-    () =>
-      OPT_STYLE_ALL.map((styleSlug) => ({
-        styleSlug,
-        styleName: i18n(styleSlug),
-        styleCode: builtinStylesMap[styleSlug] || "",
-      })),
-    [i18n]
+  // 内置样式覆盖表：用户编辑过某个内置样式时，以覆盖内容为准
+  const overrideMap = useMemo(
+    () => new Map(customStyles.map((item) => [item.styleSlug, item])),
+    [customStyles]
   );
 
-  // 拼接系统内置和用户自定义样式，生成用于界面展示的所有文本样式集合
+  // 获取本地化的系统内置文本样式列表（已合并用户对内置样式的覆盖）
+  const builtinStyles = useMemo(() => {
+    return OPT_STYLE_ALL.map((styleSlug) => {
+      const override = overrideMap.get(styleSlug);
+      return {
+        styleSlug,
+        styleName: override?.styleName || i18n(styleSlug),
+        styleCode: override?.styleCode ?? (builtinStylesMap[styleSlug] || ""),
+      };
+    });
+  }, [i18n, overrideMap]);
+
+  // 拼接系统内置（含覆盖）和用户自定义样式，生成用于界面展示的所有文本样式集合
   const allTextStyles = useMemo(() => {
-    return [...builtinStyles, ...customStyles];
+    return [
+      ...builtinStyles,
+      ...customStyles.filter(
+        (item) => !OPT_STYLE_ALL.includes(item.styleSlug)
+      ),
+    ];
   }, [builtinStyles, customStyles]);
 
   return { builtinStyles, customStyles, allTextStyles };
