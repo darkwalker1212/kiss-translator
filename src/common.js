@@ -165,6 +165,10 @@ async function getFavWords(rule) {
 }
 
 const IFRAME_TEXT_CHECK_TIMEOUT = 1000;
+const IFRAME_TEXT_WAIT_TIMEOUT = 15000;
+// Outlook 网页版等站点会在 <html> 上设置 translate="no" 来禁用浏览器翻译，
+// 若这里直接忽略会导致邮件正文 iframe 永远无法启动翻译，
+// 因此不再把 translate="no" 当作全局禁用标记。
 const IFRAME_TEXT_IGNORE_SELECTOR = [
   "script",
   "style",
@@ -178,7 +182,6 @@ const IFRAME_TEXT_IGNORE_SELECTOR = [
   "select",
   "option",
   ".notranslate",
-  "[translate='no']",
   "[contenteditable='true']",
 ].join(", ");
 
@@ -224,7 +227,50 @@ function hasIframeTranslatableText() {
 
 async function waitForIframeTranslatableText() {
   await waitForDocumentReady();
-  return hasIframeTranslatableText();
+  if (hasIframeTranslatableText()) return true;
+
+  // 部分站点（如 Outlook 网页版）的邮件正文 iframe 初始为空，
+  // 内容在用户打开邮件后才动态写入。这里保持观察一段时间，
+  // 一旦出现可翻译文本就继续启动翻译器，而不是 1 秒后直接放弃。
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    let checkTimer = null;
+    let observer = null;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (checkTimer) clearTimeout(checkTimer);
+      observer?.disconnect();
+      resolve(result);
+    };
+
+    const scheduleCheck = () => {
+      if (checkTimer || settled) return;
+      checkTimer = setTimeout(() => {
+        checkTimer = null;
+        if (hasIframeTranslatableText()) done(true);
+      }, 200);
+    };
+
+    timer = setTimeout(
+      () => done(hasIframeTranslatableText()),
+      IFRAME_TEXT_WAIT_TIMEOUT
+    );
+
+    try {
+      observer = new MutationObserver(scheduleCheck);
+      observer.observe(document.documentElement || document, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    } catch (err) {
+      done(hasIframeTranslatableText());
+    }
+  });
 }
 
 /**

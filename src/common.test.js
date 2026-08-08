@@ -161,18 +161,45 @@ describe("common iframe startup", () => {
   });
 
   test("skips empty iframe before rule matching and manager startup", async () => {
+    jest.useFakeTimers();
+    try {
+      mockIsIframe = true;
+      document.body.innerHTML = `
+        <script>const text = "ignored";</script>
+        <style>.ignored { color: red; }</style>
+        <textarea>ignored</textarea>
+      `;
+
+      const running = run();
+      // 等待 run() 完成前置读取并到达“空 iframe 等待”逻辑
+      for (let i = 0; i < 50; i += 1) {
+        await Promise.resolve();
+      }
+      jest.advanceTimersByTime(16000);
+      await running;
+
+      expect(matchRule).not.toHaveBeenCalled();
+      expect(TranslatorManager).not.toHaveBeenCalled();
+      expect(mockTranslatorManagerStart).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("starts translator manager when text appears later in an empty iframe", async () => {
     mockIsIframe = true;
-    document.body.innerHTML = `
-      <script>const text = "ignored";</script>
-      <style>.ignored { color: red; }</style>
-      <textarea>ignored</textarea>
-    `;
+    document.body.innerHTML = "<script>const text = 'ignored';</script>";
 
-    await run();
+    const running = run();
+    // 等待 run() 完成前置的 storage 读取并挂上空 iframe 的观察器
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    document.body.innerHTML = "<main>Late iframe text</main>";
 
-    expect(matchRule).not.toHaveBeenCalled();
-    expect(TranslatorManager).not.toHaveBeenCalled();
-    expect(mockTranslatorManagerStart).not.toHaveBeenCalled();
+    await running;
+
+    expect(matchRule).toHaveBeenCalledTimes(1);
+    expect(TranslatorManager).toHaveBeenCalledTimes(1);
+    expect(mockTranslatorManagerStart).toHaveBeenCalledTimes(1);
   });
 
   test("waits for DOMContentLoaded before skipping loading iframe", async () => {

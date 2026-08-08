@@ -210,6 +210,12 @@ const RULES_MAP = {
     selector: ".text-content, .embedded-text-wrapper",
     rootsSelector: ".Transition",
   },
+  // Outlook 网页版：排除界面工具栏/导航等干扰区域，
+  // 让邮件列表和正文（含正文 iframe）正常参与翻译。
+  "outlook.live.com": {
+    ignoreSelector: `[id=CenterRegion], [id=RibbonRoot], [role=toolbar], .jHAG3.XG5Jd, .OZZZK, .lDdSm, .ZfoST.VlT6S.azUpZ, .GssDD, .xpAva, .oHwUF, .D1eg_, .qQbyL, .bkYAr, .gpJ9q, .threeColumnCirclePersonaDivWidth, [class='_rWRU Ejrkd qq2gS D8iyG']`,
+    autoScan: `true`,
+  },
   "github.com": {
     autoScan: `false`,
     selector: `h1, h2, h3, h4, h5, h6, .markdown-body li, p, dd, blockquote, figcaption, label, legend, .user-profile-bio>div, [data-testid="results-list"] .search-match, .Subhead-description, [class^="prc-SelectPanel-Subtitle-"], [class^="prc-ActionList-ItemLabel-"], [role="dialog"] .overflow-auto, .h4, .repos-list-description, .discussion-title, [class*="PinnedIssue-module__Link"] span, .js-wiki-sidebar-page-container :is(.Truncate-text, .Link--primary)`,

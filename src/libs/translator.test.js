@@ -1520,4 +1520,30 @@ describe("Translator rule styles", () => {
       target.querySelector(`.${Translator.KISS_CLASS.original}`).textContent
     ).toBe("Changed original");
   });
+
+  test("still translates content when the document declares translate=no", async () => {
+    document.documentElement.setAttribute("translate", "no");
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Outlook email text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+        },
+      }
+    );
+
+    await hoverNode(target);
+    await flushAsync();
+
+    expect(
+      document.querySelector(`.${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
 });

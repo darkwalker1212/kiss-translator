@@ -312,7 +312,7 @@ export class Translator {
   data, datalist, embed, head, iframe, input, noscript, map,
   object, option, param, picture, progress,
   select, script, style, svg, track, textarea, template,
-  video, wbr, .notranslate, [contenteditable='true'], [translate='no']`;
+  video, wbr, .notranslate, [contenteditable='true'], code[translate='no'], pre[translate='no']`;
 
   #setting; // 设置选项
   #rule; // 规则
