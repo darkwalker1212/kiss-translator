@@ -16,6 +16,8 @@ const flushAsync = async () => {
   await Promise.resolve();
 };
 
+const createdTranslators = [];
+
 const hoverNode = async (node, x = 20, y = 20) => {
   node.dispatchEvent(
     new MouseEvent("mousemove", {
@@ -30,7 +32,7 @@ const hoverNode = async (node, x = 20, y = 20) => {
 };
 
 function createTranslator(rule = {}, setting = {}, favWords = []) {
-  return new Translator({
+  const translator = new Translator({
     rule: {
       transOpen: "true",
       rootsSelector: "#root",
@@ -52,6 +54,8 @@ function createTranslator(rule = {}, setting = {}, favWords = []) {
     },
     favWords,
   });
+  createdTranslators.push(translator);
+  return translator;
 }
 
 function createPlainTextTranslator(rule = {}, setting = {}) {
@@ -110,6 +114,9 @@ describe("Translator rule styles", () => {
   });
 
   afterEach(() => {
+    createdTranslators.forEach((translator) => translator.stop());
+    createdTranslators.length = 0;
+    delete document.elementFromPoint;
     global.IntersectionObserver = originalIntersectionObserver;
     global.CSSStyleSheet = originalCSSStyleSheet;
     window.scrollBy = originalScrollBy;
@@ -1514,5 +1521,623 @@ describe("Translator rule styles", () => {
     expect(
       target.querySelector(`.${Translator.KISS_CLASS.original}`).textContent
     ).toBe("Changed original");
+  });
+
+  test("holds the left mouse button to translate the whole text block and restore on second hold", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+    expect(document.getElementById("first").textContent).toContain(
+      "First paragraph"
+    );
+    expect(document.getElementById("second").textContent).toContain(
+      "Second paragraph"
+    );
+
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    // 再次按住左键：整块区域一起还原
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("expands hold translation to the whole area when paragraphs are nested in wrappers", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <div id="area">
+          <div class="para"><p id="first">Alpha paragraph</p></div>
+          <div class="para"><p id="second">Beta paragraph</p></div>
+          <div class="para"><p id="third">Gamma paragraph</p></div>
+        </div>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    const translated = [
+      ...document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`),
+    ].map((node) => node.textContent);
+    expect(translated).toHaveLength(3);
+    expect(translated).toEqual(["Translated", "Translated", "Translated"]);
+  });
+
+  test("cancels hold translation when the mouse moves to select text", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Selectable text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 0,
+        clientX: 40,
+        clientY: 25,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("translates only the current paragraph in paragraph scope mode", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(1);
+    expect(
+      document.querySelector(`#first .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#second .${Translator.KISS_CLASS.inner}`)
+    ).toBeNull();
+  });
+
+  test("translates the whole mail body when holding on any paragraph", async () => {
+    document.body.innerHTML = `
+      <div id="email">
+        <div id="first">First line of the mail</div>
+        <div id="second">Second line of the mail</div>
+        <div id="third">Third line of the mail</div>
+      </div>
+    `;
+    const second = document.getElementById("second");
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(second, 20, 20);
+    second.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(3);
+    expect(
+      document.querySelector(`#first .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#second .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#third .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    const wrapper = document.querySelector(
+      `#first .${Translator.KISS_CLASS.warpper}`
+    );
+    expect(wrapper.style.display).toBe("block");
+    expect(wrapper.style.margin).toBe("8px 0px");
+  });
+
+  test("renders hold translation inline when inline display mode is selected", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <p id="first">First paragraph</p>
+        <p id="second">Second paragraph</p>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+          mouseHoverTransDisplay: "inline",
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    const wrapper = document.querySelector(
+      `#first .${Translator.KISS_CLASS.warpper}`
+    );
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.style.display).toBe("");
+    expect(wrapper.style.margin).toBe("");
+  });
+
+  test("prefers the article container as the whole-area scope", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <article id="post">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </article>
+        <aside id="sidebar">Sidebar should stay untouched</aside>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(2);
+    expect(
+      document.querySelector(`#sidebar .${Translator.KISS_CLASS.inner}`)
+    ).toBeNull();
+  });
+
+  test("translates direct text and block children of a mixed mail body container", async () => {
+    document.body.innerHTML = `
+      <div id="email">
+        <div id="mixed">First line text
+          <div id="line1">Second line text</div>
+          <div id="line2">Third line text</div>
+        </div>
+      </div>
+    `;
+    const line1 = document.getElementById("line1");
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(line1, 20, 20);
+    line1.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    const inners = [
+      ...document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`),
+    ].map((node) => node.textContent);
+    expect(inners).toHaveLength(3);
+    expect(document.querySelector(`#mixed .${Translator.KISS_CLASS.inner}`))
+      .not.toBeNull();
+    expect(document.querySelector(`#line1 .${Translator.KISS_CLASS.inner}`))
+      .not.toBeNull();
+    expect(document.querySelector(`#line2 .${Translator.KISS_CLASS.inner}`))
+      .not.toBeNull();
+  });
+
+  test("excludes the mail title bar from the whole-area scope", async () => {
+    document.body.innerHTML = `
+      <div id="email">
+        <div id="title">Subject: Outlook test mail</div>
+        <div id="body">
+          First body line
+          <div dir="auto">Second body line</div>
+          <div dir="auto">Third body line</div>
+        </div>
+      </div>
+    `;
+    const secondLine = document.querySelector("#body [dir='auto']");
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(secondLine, 20, 20);
+    secondLine.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`#body .${Translator.KISS_CLASS.inner}`)
+        .length
+    ).toBeGreaterThanOrEqual(3);
+    expect(
+      document.querySelector(`#title .${Translator.KISS_CLASS.inner}`)
+    ).toBeNull();
+  });
+
+  test("holds to translate a link inside a widget container", async () => {
+    document.body.innerHTML = `
+      <div id="widget">
+        <svg id="icon" width="16" height="16"><path d="M0 0"/></svg>
+        <a id="link" href="#">darkwalker1212:feat/MouseHold</a>
+        had recent pushes 25 minutes ago
+      </div>
+    `;
+    const link = document.getElementById("link");
+    document.elementFromPoint = () => link;
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(link, 20, 20);
+    link.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelector(`#link .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+  });
+
+  test("holds to translate widget text next to a link", async () => {
+    document.body.innerHTML = `
+      <div id="widget">
+        <svg id="icon" width="16" height="16"><path d="M0 0"/></svg>
+        <a id="link" href="#">darkwalker1212:feat/MouseHold</a>
+        had recent pushes 25 minutes ago
+      </div>
+    `;
+    const widget = document.getElementById("widget");
+    document.elementFromPoint = () => widget;
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(widget, 20, 20);
+    widget.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelector(`#widget .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+  });
+
+  test("holds to translate a button", async () => {
+    document.body.innerHTML =
+      '<main id="root"><button id="btn">New branch</button></main>';
+    const btn = document.getElementById("btn");
+    document.elementFromPoint = () => btn;
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(btn, 20, 20);
+    btn.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelector(`#btn .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    const wrapper = document.querySelector(
+      `#btn .${Translator.KISS_CLASS.warpper}`
+    );
+    expect(wrapper.style.display).toBe("");
   });
 });

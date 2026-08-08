@@ -14,6 +14,10 @@ import {
   DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
   OPT_MOUSE_HOVER_DISPLAY_BILINGUAL,
   OPT_MOUSE_HOVER_DISPLAY_BUBBLE,
+  OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
+  OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE,
+  OPT_MOUSE_HOVER_TRANS_AREA,
+  OPT_MOUSE_HOVER_TRANS_PARAGRAPH,
 } from "../../config";
 
 /**
@@ -36,6 +40,50 @@ export default function MouseHoverSetting() {
   const handleAltShortcutInput = useCallback(
     (val) => {
       updateMouseHoverSetting({ mouseHoverKey2: val });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // 首选触发方式切换为“按住鼠标左键”
+  const handleHoldKeyChange = useCallback(
+    (checked) => {
+      updateMouseHoverSetting({ mouseHoverKeyHold: checked });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // 备选触发方式切换为“按住鼠标左键”
+  const handleAltHoldKeyChange = useCallback(
+    (checked) => {
+      updateMouseHoverSetting({ mouseHoverKey2Hold: checked });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // 按住左键触发的等待时长 (毫秒)
+  const handleHoldDelayChange = useCallback(
+    (e) => {
+      const value = Number(e.target.value);
+      updateMouseHoverSetting({
+        mouseHoverHoldDelay:
+          Number.isFinite(value) && value >= 0 ? value : 0,
+      });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // 按住左键触发的翻译范围：只翻译当前段 / 翻译整个区域
+  const handleTransModeChange = useCallback(
+    (e) => {
+      updateMouseHoverSetting({ mouseHoverTransMode: e.target.value });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // 按住左键译文的显示方式：跟随原文行内 / 独立成块
+  const handleTransDisplayChange = useCallback(
+    (e) => {
+      updateMouseHoverSetting({ mouseHoverTransDisplay: e.target.value });
     },
     [updateMouseHoverSetting]
   );
@@ -68,6 +116,11 @@ export default function MouseHoverSetting() {
     useMouseHover = true,
     mouseHoverKey = DEFAULT_MOUSEHOVER_KEY,
     mouseHoverKey2 = [],
+    mouseHoverKeyHold = false,
+    mouseHoverKey2Hold = false,
+    mouseHoverHoldDelay = 800,
+    mouseHoverTransMode = OPT_MOUSE_HOVER_TRANS_AREA,
+    mouseHoverTransDisplay = OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
     blacklist = "",
     displayMode = OPT_MOUSE_HOVER_DISPLAY_BILINGUAL,
     bubbleStyle = DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
@@ -97,24 +150,111 @@ export default function MouseHoverSetting() {
           <Grid container spacing={2} columns={12}>
             {/* 首选悬浮快捷键录入框 */}
             <Grid item xs={12} sm={12} md={4} lg={4}>
-              <ShortcutInput
-                value={mouseHoverKey}
-                onChange={handleShortcutInput}
-                label={i18n("trigger_trans_shortcut")}
-                helperText={i18n("mousehover_key_help")}
-              />
+              <Stack spacing={1}>
+                <ShortcutInput
+                  value={mouseHoverKey}
+                  onChange={handleShortcutInput}
+                  label={i18n("trigger_trans_shortcut")}
+                  helperText={i18n("mousehover_key_help")}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      name="mouseHoverKeyHold"
+                      checked={mouseHoverKeyHold}
+                      onChange={(e) => handleHoldKeyChange(e.target.checked)}
+                    />
+                  }
+                  label={i18n("mousehover_hold_key")}
+                  sx={{ width: "fit-content" }}
+                />
+              </Stack>
             </Grid>
             {/* 备用悬浮快捷键录入框 */}
             <Grid item xs={12} sm={12} md={4} lg={4}>
-              <ShortcutInput
-                value={mouseHoverKey2}
-                onChange={handleAltShortcutInput}
-                label={`${i18n("trigger_trans_shortcut")} (Alternative)`}
-                helperText={i18n("mousehover_key_help")}
-              />
+              <Stack spacing={1}>
+                <ShortcutInput
+                  value={mouseHoverKey2}
+                  onChange={handleAltShortcutInput}
+                  label={`${i18n("trigger_trans_shortcut")} (Alternative)`}
+                  helperText={i18n("mousehover_key_help")}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      name="mouseHoverKey2Hold"
+                      checked={mouseHoverKey2Hold}
+                      onChange={(e) => handleAltHoldKeyChange(e.target.checked)}
+                    />
+                  }
+                  label={i18n("mousehover_hold_key")}
+                  sx={{ width: "fit-content" }}
+                />
+              </Stack>
             </Grid>
           </Grid>
         </Box>
+
+        {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
+          <TextField
+            size="small"
+            type="number"
+            inputProps={{ min: 0, step: 50 }}
+            label={i18n("mousehover_hold_delay")}
+            helperText={i18n("mousehover_hold_delay_helper")}
+            name="mouseHoverHoldDelay"
+            value={mouseHoverHoldDelay}
+            onChange={handleHoldDelayChange}
+          />
+        )}
+
+        {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
+          <TextField
+            fullWidth
+            select
+            size="small"
+            name="mouseHoverTransMode"
+            value={mouseHoverTransMode}
+            label={i18n("mousehover_hold_scope")}
+            helperText={i18n("mousehover_hold_scope_helper")}
+            onChange={handleTransModeChange}
+          >
+            <MenuItem value={OPT_MOUSE_HOVER_TRANS_PARAGRAPH}>
+              {i18n("mousehover_hold_scope_paragraph")}
+            </MenuItem>
+            <MenuItem value={OPT_MOUSE_HOVER_TRANS_AREA}>
+              {i18n("mousehover_hold_scope_area")}
+            </MenuItem>
+          </TextField>
+        )}
+
+        {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
+          <TextField
+            fullWidth
+            select
+            size="small"
+            name="mouseHoverTransDisplay"
+            value={mouseHoverTransDisplay}
+            label={i18n("mousehover_hold_display")}
+            helperText={i18n("mousehover_hold_display_helper")}
+            onChange={handleTransDisplayChange}
+          >
+            <MenuItem value={OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK}>
+              {i18n("mousehover_hold_display_block")}
+            </MenuItem>
+            <MenuItem value={OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE}>
+              {i18n("mousehover_hold_display_inline")}
+            </MenuItem>
+          </TextField>
+        )}
+
+        {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
+          <Box sx={{ color: "text.secondary", fontSize: 13 }}>
+            {i18n("mousehover_hold_key_helper")}
+          </Box>
+        )}
 
         <Box>
           <Grid container spacing={2} columns={12}>
