@@ -370,7 +370,11 @@ export class Translator {
   #boundMouseDownHandler = null; // 鼠标左键按下事件
   #boundMouseUpHandler = null; // 鼠标左键松开事件
   #boundMouseHoldMoveHandler = null; // 按住期间移动取消事件
+  #boundMouseHoldClickHandler = null; // 按住翻译后拦截点击的事件
   #boundCancelMouseHold = null; // 取消按住状态的绑定函数
+  #mouseHoldSuppressClick = false; // 本次按住翻译成功后是否阻止松开时的点击
+  #mouseHoldPreventClickEnabled = false; // 本次按住是否启用“阻止点击跳转”
+  #mouseHoldInteractive = false; // 按住起点是否位于链接/按钮等可交互元素上
   #hoveredNode = null; // 存储当前悬停的可翻译节点
   #hoverPointer = { x: 0, y: 0 }; // 最近一次鼠标位置，用于定位气泡
   #hoverPointerValid = false; // 是否已经收到过有效的 mousemove 坐标
@@ -1300,6 +1304,8 @@ export class Translator {
     this.#boundMouseUpHandler = (event) => this.#handleMouseHoldUp(event);
     this.#boundMouseHoldMoveHandler = (event) =>
       this.#handleMouseHoldMove(event);
+    this.#boundMouseHoldClickHandler = (event) =>
+      this.#handleMouseHoldClick(event);
     this.#boundCancelMouseHold = () => this.#cancelMouseHold();
 
     document.addEventListener(
@@ -1311,6 +1317,11 @@ export class Translator {
     document.addEventListener(
       "mousemove",
       this.#boundMouseHoldMoveHandler,
+      true
+    );
+    document.addEventListener(
+      "click",
+      this.#boundMouseHoldClickHandler,
       true
     );
     window.addEventListener("blur", this.#boundCancelMouseHold);
@@ -1333,6 +1344,11 @@ export class Translator {
       document.removeEventListener(
         "mousemove",
         this.#boundMouseHoldMoveHandler,
+        true
+      );
+      document.removeEventListener(
+        "click",
+        this.#boundMouseHoldClickHandler,
         true
       );
       window.removeEventListener("blur", this.#boundCancelMouseHold);
@@ -1360,6 +1376,15 @@ export class Translator {
     this.#cancelMouseHold();
     this.#mouseHoldActive = true;
     this.#mouseHoldTriggered = false;
+    this.#mouseHoldSuppressClick = false;
+    this.#mouseHoldPreventClickEnabled = Boolean(
+      this.#setting.mouseHoverSetting?.mouseHoverPreventClick
+    );
+    this.#mouseHoldInteractive = Boolean(
+      target?.closest?.(
+        "button, a, [role='button'], [role='link'], summary"
+      )
+    );
     this.#mouseHoldStartX = event.clientX;
     this.#mouseHoldStartY = event.clientY;
 
@@ -1370,6 +1395,9 @@ export class Translator {
       const selectionText = window.getSelection?.()?.toString()?.trim();
       if (selectionText) return;
       this.#mouseHoldTriggered = true;
+      if (this.#mouseHoldPreventClickEnabled && this.#mouseHoldInteractive) {
+        this.#mouseHoldSuppressClick = true;
+      }
       this.#handleMouseHoldToggle();
     }, this.#getMouseHoldDelay());
   }
@@ -1389,10 +1417,28 @@ export class Translator {
     if (moved) this.#cancelMouseHold();
   }
 
+  // 按住链接/按钮翻译成功后，松开时的点击不再触发跳转或按钮点击
+  #handleMouseHoldClick(event) {
+    if (!this.#mouseHoldSuppressClick) return;
+    this.#mouseHoldSuppressClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
   // 取消按住左键触发的等待状态
   #cancelMouseHold() {
     this.#mouseHoldActive = false;
     this.#mouseHoldTriggered = false;
+    this.#mouseHoldPreventClickEnabled = false;
+    this.#mouseHoldInteractive = false;
+    if (this.#mouseHoldSuppressClick) {
+      // click 事件在 mouseup 之后同步触发，这里仅作为兜底清理，
+      // 避免窗口失焦等场景下标志残留导致下一次点击被误拦截。
+      setTimeout(() => {
+        this.#mouseHoldSuppressClick = false;
+      }, 0);
+    }
     if (this.#mouseHoldTimer) {
       clearTimeout(this.#mouseHoldTimer);
       this.#mouseHoldTimer = null;
@@ -1454,18 +1500,25 @@ export class Translator {
       targetNode = targetNode.parentElement || targetNode;
     }
 
-    // 链接、按钮等短文本元素即使未被常规扫描登记，也直接作为翻译单元处理；
+    // 链接、按钮等短文本元素作为独立翻译单元处理；
     // 这些元素通常位于导航/按钮等紧凑布局中，译文始终使用行内显示，
     // 避免块级译文把单行导航撑成两行甚至被容器裁剪。
+    // 是否翻译仍遵循规则设置（不翻译节点选择器、根节点选择器、目标元素选择器等）。
     const atomicTarget = this.#findAtomicHoldTarget(targetNode);
     if (atomicTarget) {
-      this.#toggleTargetNode(
-        atomicTarget,
-        true,
-        false
-      );
-      return;
+      if (this.#isHoldTargetAllowed(atomicTarget)) {
+        this.#toggleTargetNode(atomicTarget, true, false);
+        return;
+      }
+      // 原子目标被规则排除时，回退到悬停时登记的容器/原文单元
+      targetNode = this.#hoveredNode;
+      if (targetNode?.classList?.contains(Translator.KISS_CLASS.warpper)) {
+        targetNode = targetNode.parentElement || targetNode;
+      }
     }
+
+    // 规则设置优先：不满足不翻译节点选择器/根节点/目标选择器时直接跳过
+    if (!this.#isHoldTargetAllowed(targetNode)) return;
 
     const transMode =
       this.#setting.mouseHoverSetting?.mouseHoverTransMode ||
@@ -1506,6 +1559,12 @@ export class Translator {
             ) &&
             (current.textContent || "").trim()
           ) {
+            // 链接/按钮内部只有块级内容时（如链接直接包裹 h2/p 等），
+            // 把它当作原子目标会导致内部块被分段规则跳过而翻译失败，
+            // 应退回由悬停登记的标题/段落节点处理。
+            if (!Translator.hasTextNode(current) && this.#hasBlockNode(current)) {
+              break;
+            }
             return current;
           }
         } catch (err) {
@@ -1515,6 +1574,42 @@ export class Translator {
       current = current.parentElement;
     }
     return null;
+  }
+
+  // 目标是否位于规则设置的根节点内（rootsSelector）
+  #isWithinRuleRoots(node) {
+    if (this.#rootNodes.size === 0) return true;
+    let el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    while (el) {
+      for (const root of this.#rootNodes) {
+        if (root === el || root.contains?.(el)) return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  // autoScan=false 时，目标必须匹配规则设置的目标元素选择器（selector）
+  #matchesRuleTargetSelector(node) {
+    if (this.#rule.autoScan !== "false") return true;
+    const selector = this.#rule.selector?.trim();
+    if (!selector) return true;
+    const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    if (!Translator.isElement(el)) return false;
+    try {
+      return Boolean(el.matches(selector));
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // 按住左键翻译的目标是否允许翻译（遵循个人/订阅/全局规则设置）
+  #isHoldTargetAllowed(node) {
+    if (!node) return false;
+    if (node.closest?.(this.#ignoreSelector)) return false;
+    if (!this.#isWithinRuleRoots(node)) return false;
+    if (!this.#matchesRuleTargetSelector(node)) return false;
+    return true;
   }
 
   // 查找“翻译整个区域”模式下的区域容器。
@@ -1541,7 +1636,8 @@ export class Translator {
         !parent ||
         parent === document.body ||
         parent === document.documentElement ||
-        parent.closest?.(this.#ignoreSelector)
+        parent.closest?.(this.#ignoreSelector) ||
+        !this.#isWithinRuleRoots(parent)
       ) {
         break;
       }
@@ -1589,6 +1685,10 @@ export class Translator {
   #toggleHoverBlock(container) {
     if (!this.#isInitialized) {
       this.#init();
+    }
+    // 区域容器必须在规则设置的根节点内，避免越界翻译
+    if (!this.#isWithinRuleRoots(container)) {
+      return;
     }
     this.#scanNode(container);
     const units = this.#collectHoverBlockUnits(container);

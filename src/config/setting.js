@@ -239,6 +239,7 @@ export const DEFAULT_MOUSE_HOVER_SETTING = {
   mouseHoverHoldDelay: DEFAULT_MOUSE_HOVER_HOLD_DELAY, // 按住左键触发翻译的等待时长 (毫秒)
   mouseHoverTransMode: OPT_MOUSE_HOVER_TRANS_AREA, // 按住左键触发的翻译范围
   mouseHoverTransDisplay: OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK, // 按住左键译文显示方式
+  mouseHoverPreventClick: false, // 按住链接/按钮翻译后松开是否阻止点击跳转（默认关闭）
   displayMode: OPT_MOUSE_HOVER_DISPLAY_BILINGUAL, // 鼠标悬停翻译展示模式
   bubbleStyle: DEFAULT_MOUSE_HOVER_BUBBLE_STYLE, // 气泡模式的容器 CSS
 };

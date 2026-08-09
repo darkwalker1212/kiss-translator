@@ -4532,6 +4532,22 @@ export const I18N = {
     ko: `「독립 블록」은 원문 아래에 간격을 두고 번역을 표시하여 메일·장문 대조 읽기에 적합합니다. 「원문과 같은 줄」은 일반 호버 번역과 동일합니다.`,
     tr: `"Bağımsız blok" çeviriyi orijinal metnin altında boşlukla gösterir; e-posta ve uzun metinler için idealdir. "Orijinal metinle aynı satır" normal üzerine gelme çevirisiyle aynıdır.`,
   },
+  mousehover_hold_prevent_click: {
+    zh: `按住链接/按钮翻译后，松开不触发点击跳转`,
+    en: `Suppress click/navigation after hold-to-translate on links and buttons`,
+    zh_TW: `按住連結/按鈕翻譯後，放開不觸發點擊跳轉`,
+    ja: `リンク/ボタンを長押し翻訳した後、離してもクリック/移動を発生させない`,
+    ko: `링크/버튼을 길게 눌러 번역한 후, 놓아도 클릭/이동을 발생시키지 않음`,
+    tr: `Bağlantı/düğmelerde basılı tutarak çeviri yaptıktan sonra bırakınca tıklama/gezinmeyi engelle`,
+  },
+  mousehover_hold_prevent_click_helper: {
+    zh: `开启后，按住链接或按钮翻译成功并松开时，不会触发链接跳转或按钮点击；默认关闭。`,
+    en: `When enabled, releasing after a successful hold-to-translate on a link or button will not trigger navigation or a button click. Disabled by default.`,
+    zh_TW: `開啟後，按住連結或按鈕翻譯成功並放開時，不會觸發連結跳轉或按鈕點擊；預設關閉。`,
+    ja: `有効にすると、リンクまたはボタンを長押し翻訳して離しても、リンク移動やボタンクリックは発生しません。デフォルトは無効です。`,
+    ko: `사용하면 링크나 버튼을 길게 눌러 번역한 후 놓아도 링크 이동이나 버튼 클릭이 발생하지 않습니다. 기본값은 꺼짐입니다.`,
+    tr: `Etkinleştirildiğinde, bağlantı veya düğmede başarılı basılı tutma çevirisinden sonra bırakmak gezinme veya düğme tıklamasını tetiklemez. Varsayılan kapalıdır.`,
+  },
   mousehover_display_mode: {
     zh: `展示模式`,
     en: `Display mode`,

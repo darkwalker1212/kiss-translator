@@ -88,6 +88,14 @@ export default function MouseHoverSetting() {
     [updateMouseHoverSetting]
   );
 
+  // 按住链接/按钮翻译后是否阻止点击跳转
+  const handlePreventClickChange = useCallback(
+    (checked) => {
+      updateMouseHoverSetting({ mouseHoverPreventClick: checked });
+    },
+    [updateMouseHoverSetting]
+  );
+
   // 悬浮查词黑名单 (正则/字符串规则匹配) 文本变化回调
   const handleBlacklistChange = useCallback(
     (e) => {
@@ -121,6 +129,7 @@ export default function MouseHoverSetting() {
     mouseHoverHoldDelay = 800,
     mouseHoverTransMode = OPT_MOUSE_HOVER_TRANS_AREA,
     mouseHoverTransDisplay = OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
+    mouseHoverPreventClick = false,
     blacklist = "",
     displayMode = OPT_MOUSE_HOVER_DISPLAY_BILINGUAL,
     bubbleStyle = DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
@@ -253,6 +262,27 @@ export default function MouseHoverSetting() {
         {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
           <Box sx={{ color: "text.secondary", fontSize: 13 }}>
             {i18n("mousehover_hold_key_helper")}
+          </Box>
+        )}
+
+        {(mouseHoverKeyHold || mouseHoverKey2Hold) && (
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                name="mouseHoverPreventClick"
+                checked={mouseHoverPreventClick}
+                onChange={(e) => handlePreventClickChange(e.target.checked)}
+              />
+            }
+            label={i18n("mousehover_hold_prevent_click")}
+            sx={{ width: "fit-content" }}
+          />
+        )}
+
+        {mouseHoverPreventClick && (
+          <Box sx={{ color: "text.secondary", fontSize: 13 }}>
+            {i18n("mousehover_hold_prevent_click_helper")}
           </Box>
         )}
 
