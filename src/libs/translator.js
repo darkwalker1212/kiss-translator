@@ -1520,6 +1520,16 @@ export class Translator {
     // 规则设置优先：不满足不翻译节点选择器/根节点/目标选择器时直接跳过
     if (!this.#isHoldTargetAllowed(targetNode)) return;
 
+    // 容器内的文本全部位于块级子节点中时（如链接包裹 h1/span），
+    // 直接翻译容器会因块级子节点被分段规则切断而落空，
+    // 应下钻到最深层的文本容器（Yahoo 新闻标题等结构）。
+    if (!Translator.hasTextNode(targetNode)) {
+      const leaf = this.#findDeepestTextLeaf(targetNode);
+      if (leaf && leaf !== targetNode && this.#isHoldTargetAllowed(leaf)) {
+        targetNode = leaf;
+      }
+    }
+
     const transMode =
       this.#setting.mouseHoverSetting?.mouseHoverTransMode ||
       OPT_MOUSE_HOVER_TRANS_AREA;
@@ -1559,10 +1569,17 @@ export class Translator {
             ) &&
             (current.textContent || "").trim()
           ) {
+            // 链接/按钮内部没有直接文本时，优先定位最深层的文本容器，
+            // 让译文与解除截断的样式直接作用在真正的文本元素上
+            // （如 <a><span>标题</span></a>，Yahoo 新闻标题即此类结构）。
+            if (!Translator.hasTextNode(current)) {
+              const leaf = this.#findSingleTextLeaf(current);
+              if (leaf) return leaf;
+            }
             // 链接/按钮内部只有块级内容时（如链接直接包裹 h2/p 等），
             // 把它当作原子目标会导致内部块被分段规则跳过而翻译失败，
             // 应退回由悬停登记的标题/段落节点处理。
-            if (!Translator.hasTextNode(current) && this.#hasBlockNode(current)) {
+            if (this.#hasBlockNode(current)) {
               break;
             }
             return current;
@@ -1574,6 +1591,59 @@ export class Translator {
       current = current.parentElement;
     }
     return null;
+  }
+
+  // 查找可交互元素内唯一的非空文本叶子元素（行内文本容器）。
+  // 若内部已经存在译文容器，则返回译文宿主，保证再次按住时能正确还原。
+  #findSingleTextLeaf(node) {
+    if (!Translator.isElement(node)) return null;
+    const wrapper = node.querySelector?.(`.${Translator.KISS_CLASS.warpper}`);
+    if (wrapper?.parentElement && wrapper.parentElement !== node) {
+      return wrapper.parentElement;
+    }
+    let leaf = null;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    let current;
+    while ((current = walker.nextNode())) {
+      if (!current.nodeValue?.trim()) continue;
+      if (leaf) return null; // 存在多个非空文本节点时不下钻
+      leaf = current.parentElement;
+    }
+    if (!leaf || leaf === node) return null;
+    if (
+      leaf.matches?.("button, a, [role='button'], [role='link'], summary")
+    ) {
+      return null;
+    }
+    return leaf;
+  }
+
+  // 查找容器内文本最长的深层文本叶子元素。
+  // 用于按住翻译的目标是外层容器、而真实文本在块级子节点内的情况。
+  #findDeepestTextLeaf(node) {
+    if (!Translator.isElement(node)) return null;
+    let best = null;
+    let bestLength = 0;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    let current;
+    while ((current = walker.nextNode())) {
+      const text = current.nodeValue?.trim() || "";
+      if (!text) continue;
+      if (current.parentElement?.closest?.(`.${Translator.KISS_CLASS.warpper}`)) {
+        continue;
+      }
+      if (text.length > bestLength) {
+        bestLength = text.length;
+        best = current.parentElement;
+      }
+    }
+    if (!best || best === node) return null;
+    if (
+      best.matches?.("button, a, [role='button'], [role='link'], summary")
+    ) {
+      return null;
+    }
+    return best;
   }
 
   // 目标是否位于规则设置的根节点内（rootsSelector）
