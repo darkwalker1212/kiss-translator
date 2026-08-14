@@ -13,6 +13,7 @@ import Grid from "@mui/material/Grid";
 import {
   DEFAULT_MOUSEHOVER_KEY,
   DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
+  DEFAULT_MOUSE_HOVER_HOLD_DELAY,
   GLOBAL_KEY,
   OPT_MOUSE_HOVER_DISPLAY_BILINGUAL,
   OPT_MOUSE_HOVER_DISPLAY_BUBBLE,
@@ -20,6 +21,7 @@ import {
   OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE,
   OPT_MOUSE_HOVER_TRANS_AREA,
   OPT_MOUSE_HOVER_TRANS_PARAGRAPH,
+  OPT_MOUSE_HOVER_TRANS_REGION,
 } from "../../config";
 
 /**
@@ -63,13 +65,16 @@ export default function MouseHoverSetting() {
     [updateMouseHoverSetting]
   );
 
-  // 按住左键触发的等待时长 (毫秒)
+  // 按住左键触发的等待时长 (毫秒)；0/非法值归一为默认值，
+  // 与运行时 #getMouseHoldDelay 的“非正数回退默认”语义保持一致。
   const handleHoldDelayChange = useCallback(
     (e) => {
       const value = Number(e.target.value);
       updateMouseHoverSetting({
         mouseHoverHoldDelay:
-          Number.isFinite(value) && value >= 0 ? value : 0,
+          Number.isFinite(value) && value > 0
+            ? value
+            : DEFAULT_MOUSE_HOVER_HOLD_DELAY,
       });
     },
     [updateMouseHoverSetting]
@@ -224,7 +229,7 @@ export default function MouseHoverSetting() {
           <TextField
             size="small"
             type="number"
-            inputProps={{ min: 0, step: 50 }}
+            inputProps={{ min: 1, step: 50 }}
             label={i18n("mousehover_hold_delay")}
             helperText={i18n("mousehover_hold_delay_helper")}
             name="mouseHoverHoldDelay"
@@ -246,6 +251,9 @@ export default function MouseHoverSetting() {
           >
             <MenuItem value={OPT_MOUSE_HOVER_TRANS_PARAGRAPH}>
               {i18n("mousehover_hold_scope_paragraph")}
+            </MenuItem>
+            <MenuItem value={OPT_MOUSE_HOVER_TRANS_REGION}>
+              {i18n("mousehover_hold_scope_region")}
             </MenuItem>
             <MenuItem value={OPT_MOUSE_HOVER_TRANS_AREA}>
               {i18n("mousehover_hold_scope_area")}

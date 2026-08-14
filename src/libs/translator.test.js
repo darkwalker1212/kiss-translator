@@ -104,6 +104,7 @@ describe("Translator rule styles", () => {
   let originalCSSStyleSheet;
   let originalScrollBy;
   let originalChrome;
+  let originalMatchMedia;
 
   beforeEach(() => {
     jest.useFakeTimers();
@@ -137,6 +138,20 @@ describe("Translator rule styles", () => {
     window.scrollBy = jest.fn();
 
     originalChrome = globalThis.chrome;
+
+    // 默认模拟可悬停设备，保证按住触发测试正常运行；
+    // 个别用例按查询串覆写（如纯触屏设备场景）。
+    originalMatchMedia = window.matchMedia;
+    window.matchMedia = jest.fn((query) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    }));
   });
 
   afterEach(() => {
@@ -147,6 +162,7 @@ describe("Translator rule styles", () => {
     global.CSSStyleSheet = originalCSSStyleSheet;
     window.scrollBy = originalScrollBy;
     globalThis.chrome = originalChrome;
+    window.matchMedia = originalMatchMedia;
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
     jest.clearAllMocks();
@@ -2128,6 +2144,297 @@ describe("Translator rule styles", () => {
     ).toHaveLength(0);
   });
 
+  test("drops stale whole-area results after a second hold restores pending translations", async () => {
+    const resolvers = [];
+    apiTranslate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false", wrapOriginal: "true" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    // 两个段落的请求仍在途：loading 容器已插入
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+    expect(resolvers).toHaveLength(2);
+
+    // 第二次按住：整块还原，loading 容器被移除，但请求尚未完成
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // 在途请求此刻才完成：过期结果必须被丢弃，
+    // 不得再把已还原的原文包裹进 .original 容器或插入译文
+    resolvers.forEach((resolve) =>
+      resolve({ trText: "Translated", isSame: false })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.original}`)
+    ).toHaveLength(0);
+    expect(document.getElementById("first").textContent).toBe(
+      "First paragraph"
+    );
+    expect(document.getElementById("second").textContent).toBe(
+      "Second paragraph"
+    );
+  });
+
+  test("keeps restored original text visible when a pending transOnly whole-area request finishes", async () => {
+    const resolvers = [];
+    apiTranslate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false", transOnly: "true" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+
+    // 第二次按住还原后，在途的仅译文请求完成：
+    // 不得把已还原的原文搬走（#removeOriginal 会移动原文节点导致原文消失）
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+    expect(document.getElementById("first").textContent).toBe(
+      "First paragraph"
+    );
+
+    resolvers.forEach((resolve) =>
+      resolve({ trText: "Translated", isSame: false })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+    expect(document.getElementById("first").isConnected).toBe(true);
+    expect(document.getElementById("first").textContent).toBe(
+      "First paragraph"
+    );
+    expect(document.getElementById("second").textContent).toBe(
+      "Second paragraph"
+    );
+  });
+
+  test("ignores stale failed whole-area requests after restore without touching a new translation", async () => {
+    const resolvers = [];
+    apiTranslate.mockImplementation(
+      () =>
+        new Promise((resolve, reject) => {
+          resolvers.push({ resolve, reject });
+        })
+    );
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="first">First paragraph</p>
+          <p id="second">Second paragraph</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    const hold = () => {
+      first.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          clientX: 20,
+          clientY: 20,
+        })
+      );
+      jest.advanceTimersByTime(300);
+      document.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, button: 0 })
+      );
+    };
+
+    await hoverNode(first, 20, 20);
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+    expect(resolvers).toHaveLength(2);
+
+    // 第二次按住：还原，移除两个 loading 容器
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // 第三次按住：发起新一轮翻译
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+    expect(resolvers).toHaveLength(4);
+
+    // 旧请求此刻才失败：过期失败结果必须被丢弃，
+    // 不得在宿主的新译文容器里渲染重试按钮或清空其内容
+    resolvers[0].reject(new Error("network error"));
+    resolvers[1].reject(new Error("network error"));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.retry}`)
+    ).toHaveLength(0);
+
+    // 新一轮请求正常完成，译文与原文都完好
+    resolvers[2].resolve({ trText: "Translated", isSame: false });
+    resolvers[3].resolve({ trText: "Translated", isSame: false });
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(2);
+    expect(document.getElementById("first").textContent).toContain(
+      "First paragraph"
+    );
+    expect(document.getElementById("second").textContent).toContain(
+      "Second paragraph"
+    );
+  });
+
   test("expands hold translation to the whole area when paragraphs are nested in wrappers", async () => {
     document.body.innerHTML = `
       <main id="root">
@@ -2221,6 +2528,386 @@ describe("Translator rule styles", () => {
     expect(
       document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
     ).toHaveLength(0);
+  });
+
+  test("falls back to the default hold delay when mouseHoverHoldDelay is 0", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Hold target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 0,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+
+    // 0 应回退到默认 800ms：未到 800ms 前不触发
+    // 注意不能在此处调用 flushAsync（其 runOnlyPendingTimers 会无视剩余时间
+    // 提前执行挂起的定时器），直接用真实时钟推进断言。
+    jest.advanceTimersByTime(700);
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // 达到默认 800ms 时触发
+    jest.advanceTimersByTime(100);
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(1);
+
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+  });
+
+  test("cancels pending hold translation on pointercancel and contextmenu", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Hold target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+
+    // pointercancel（触摸手势被浏览器接管）取消按住
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    document.dispatchEvent(new Event("pointercancel", { bubbles: true }));
+    jest.advanceTimersByTime(400);
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // contextmenu（右键/移动端长按菜单）取消按住
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    document.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true })
+    );
+    jest.advanceTimersByTime(400);
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("does not register hold handlers on touch-only devices", async () => {
+    window.matchMedia.mockImplementation((query) => ({
+      matches: query !== "(hover: hover)",
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    }));
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Hold target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(500);
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("caps concurrent hold-triggered whole-area requests and drains the queue", async () => {
+    const resolvers = [];
+    apiTranslate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+    const drain = async () => {
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    };
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          ${[1, 2, 3, 4, 5, 6, 7]
+            .map((i) => `<p id="p${i}">Paragraph ${i}</p>`)
+            .join("")}
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("p1");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await drain();
+
+    // 所有单元的 loading 容器都已插入，但在途请求被限制在 5 个并发名额内
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(7);
+    expect(resolvers).toHaveLength(5);
+
+    // 完成一个请求 → 释放一个名额 → 队列中第 6 个请求发出
+    resolvers[0]({ trText: "Translated", isSame: false });
+    await drain();
+    expect(resolvers).toHaveLength(6);
+
+    // 再完成一个 → 第 7 个请求发出
+    resolvers[1]({ trText: "Translated", isSame: false });
+    await drain();
+    expect(resolvers).toHaveLength(7);
+
+    // 完成其余请求 → 全部段落翻译完成，原文完好
+    for (let i = 2; i < 7; i++) {
+      resolvers[i]({ trText: "Translated", isSame: false });
+    }
+    await drain();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(7);
+    expect(document.getElementById("p7").textContent).toContain(
+      "Paragraph 7"
+    );
+
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+  });
+
+  test("picks up newly added content in the whole area after DOM changes", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="p1">Paragraph 1</p>
+          <p id="p2">Paragraph 2</p>
+        </section>
+      </main>
+    `;
+    const first = document.getElementById("p1");
+    const area = document.getElementById("area");
+
+    const translator = createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    const hold = () => {
+      first.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          clientX: 20,
+          clientY: 20,
+        })
+      );
+      jest.advanceTimersByTime(300);
+      document.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, button: 0 })
+      );
+    };
+
+    await hoverNode(first, 20, 20);
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // 区域新增段落：生产环境中 MutationObserver 驱动的重扫描会使单元缓存失效。
+    // 测试环境 MO→空闲定时器链在假定时器下不可靠，这里与仓库既有重扫描测试
+    // 一致，显式调用 rescan() 触发同样的失效路径（rescan -> #init 清空缓存）。
+    const p3 = document.createElement("p");
+    p3.id = "p3";
+    p3.textContent = "Paragraph 3";
+    area.appendChild(p3);
+    translator.rescan();
+    await flushAsync();
+
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(3);
+  });
+
+  test("applies a changed ignore selector to cached whole-area units", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <section id="area">
+          <p id="p1">Paragraph 1</p>
+          <p id="p2">Paragraph 2</p>
+        </section>
+      </main>
+    `;
+    const second = document.getElementById("p2");
+
+    const translator = createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    const hold = () => {
+      second.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          clientX: 20,
+          clientY: 20,
+        })
+      );
+      jest.advanceTimersByTime(300);
+      document.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, button: 0 })
+      );
+    };
+
+    await hoverNode(second, 20, 20);
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(2);
+
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+
+    // 动态变更忽略规则：只重挂 IO、不触发重扫描，缓存单元需在用时重新过滤
+    translator.updateRule({ ignoreSelector: "#p1" });
+    await flushAsync();
+
+    hold();
+    await flushAsync();
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(1);
+    expect(
+      document.querySelector(`#p1 .${Translator.KISS_CLASS.warpper}`)
+    ).toBeNull();
+    expect(
+      document.querySelector(`#p2 .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
   });
 
   test("translates only the current paragraph in paragraph scope mode", async () => {
@@ -2382,7 +3069,7 @@ describe("Translator rule styles", () => {
     expect(wrapper.style.margin).toBe("");
   });
 
-  test("prefers the article container as the whole-area scope", async () => {
+  test("translates the whole flat article area and leaves the sidebar untouched", async () => {
     document.body.innerHTML = `
       <main id="root">
         <article id="post">
@@ -2430,6 +3117,132 @@ describe("Translator rule styles", () => {
     expect(
       document.querySelector(`#sidebar .${Translator.KISS_CLASS.inner}`)
     ).toBeNull();
+  });
+
+  test("translates the nearest nested region in region scope mode", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <article id="post">
+          <p id="intro">Intro paragraph</p>
+          <section id="group">
+            <p id="first">First paragraph</p>
+            <p id="second">Second paragraph</p>
+          </section>
+          <p id="outro">Outro paragraph</p>
+        </article>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "region",
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    // 只翻译最近的嵌套区域（section#group），不扩到整篇文章
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(2);
+    expect(
+      document.querySelector(`#group #first .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#group #second .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#intro .${Translator.KISS_CLASS.inner}`)
+    ).toBeNull();
+    expect(
+      document.querySelector(`#outro .${Translator.KISS_CLASS.inner}`)
+    ).toBeNull();
+  });
+
+  test("translates the whole article in area scope mode when paragraphs are nested in a section", async () => {
+    document.body.innerHTML = `
+      <main id="root">
+        <article id="post">
+          <p id="intro">Intro paragraph</p>
+          <section id="group">
+            <p id="first">First paragraph</p>
+            <p id="second">Second paragraph</p>
+          </section>
+          <p id="outro">Outro paragraph</p>
+        </article>
+      </main>
+    `;
+    const first = document.getElementById("first");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "area",
+        },
+      }
+    );
+
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    // 区域模式优先整篇文章：嵌套结构下的段落也全部翻译
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.inner}`)
+    ).toHaveLength(4);
+    expect(
+      document.querySelector(`#intro .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#first .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#second .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
+    expect(
+      document.querySelector(`#outro .${Translator.KISS_CLASS.inner}`)
+    ).not.toBeNull();
   });
 
   test("translates direct text and block children of a mixed mail body container", async () => {

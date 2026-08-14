@@ -17,6 +17,7 @@ import {
   OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
   OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE,
   OPT_MOUSE_HOVER_TRANS_PARAGRAPH,
+  OPT_MOUSE_HOVER_TRANS_REGION,
   OPT_SPLIT_PARAGRAPH_PUNCTUATION,
   OPT_SPLIT_PARAGRAPH_DISABLE,
   OPT_SPLIT_PARAGRAPH_TEXTLENGTH,
@@ -381,6 +382,10 @@ export class Translator {
   #mouseHoldSuppressClick = false; // 本次按住翻译成功后是否阻止松开时的点击
   #mouseHoldPreventClickEnabled = false; // 本次按住是否启用“阻止点击跳转”
   #mouseHoldInteractive = false; // 按住起点是否位于链接/按钮等可交互元素上
+  #holdRequestConcurrency = 0; // 按住触发翻译的在途 API 请求数
+  #holdRequestWaiters = []; // 等待并发名额的翻译请求
+  #holdRequestLimit = 5; // 按住触发翻译的最大并发请求数
+  #holdUnitsCache = new WeakMap(); // 区域容器 -> 已收集的翻译单元（DOM 变更/重扫描时失效）
   #hoveredNode = null; // 存储当前悬停的可翻译节点
   #hoverPointer = { x: 0, y: 0 }; // 最近一次鼠标位置，用于定位气泡
   #hoverPointerValid = false; // 是否已经收到过有效的 mousemove 坐标
@@ -946,6 +951,8 @@ export class Translator {
   // 初始化
   #init() {
     this.#isInitialized = true;
+    // 重新初始化意味着规则/DOM 都可能变化，按住翻译的区域单元缓存全部失效
+    this.#holdUnitsCache = new WeakMap();
 
     // 注入JS/CSS
     this.#initInjector();
@@ -1339,6 +1346,20 @@ export class Translator {
     return display !== OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE;
   }
 
+  // 纯触屏设备（主输入设备不支持悬停）上“按住鼠标左键”没有对应语义，
+  // 长按会触发系统菜单/选词，容易误触发翻译，因此不注册按住监听。
+  // matchMedia 不可用或抛错时（极旧环境）默认启用。
+  #isHoldSupportedByDevice() {
+    try {
+      return (
+        typeof window.matchMedia !== "function" ||
+        window.matchMedia("(hover: hover)").matches
+      );
+    } catch (err) {
+      return true;
+    }
+  }
+
   // 注册“按住鼠标左键不放”触发翻译/还原的监听
   #registerMouseHoldHandler() {
     if (this.#removeMouseHoldHandlers) return;
@@ -1361,7 +1382,7 @@ export class Translator {
     document.addEventListener(
       "mousemove",
       this.#boundMouseHoldMoveHandler,
-      true
+      { capture: true, passive: true }
     );
     document.addEventListener(
       "click",
@@ -1372,6 +1393,18 @@ export class Translator {
     document.addEventListener(
       "visibilitychange",
       this.#boundCancelMouseHold
+    );
+    // 触摸手势被浏览器接管（按住后滚动/系统手势）时取消，避免残留状态触发翻译
+    document.addEventListener(
+      "pointercancel",
+      this.#boundCancelMouseHold,
+      true
+    );
+    // 按住期间弹出右键/移动端长按菜单时取消
+    document.addEventListener(
+      "contextmenu",
+      this.#boundCancelMouseHold,
+      true
     );
 
     this.#removeMouseHoldHandlers = () => {
@@ -1399,6 +1432,16 @@ export class Translator {
       document.removeEventListener(
         "visibilitychange",
         this.#boundCancelMouseHold
+      );
+      document.removeEventListener(
+        "pointercancel",
+        this.#boundCancelMouseHold,
+        true
+      );
+      document.removeEventListener(
+        "contextmenu",
+        this.#boundCancelMouseHold,
+        true
       );
       this.#removeMouseHoldHandlers = null;
       this.#boundCancelMouseHold = null;
@@ -1587,7 +1630,7 @@ export class Translator {
       return;
     }
 
-    const area = this.#findMouseHoverAreaNode(targetNode);
+    const area = this.#findMouseHoverAreaNode(targetNode, transMode);
     if (!area || area === targetNode) {
       this.#toggleTargetNode(
         targetNode,
@@ -1728,11 +1771,12 @@ export class Translator {
 
   // 查找“翻译整个区域”模式下的区域容器。
   // 使用两层限制：
-  // 1) 优先找最近的 article/main/[role=main] 等文章框架（整篇文章）；
-  // 2) 没有文章框架时，找“最近的、包含多个文字块”的容器，
-  //    在 Outlook 中即邮件正文容器本身，不会把上方标题栏圈进来。
-  // 最后才退回鼠标上方最外层块级容器。
-  #findMouseHoverAreaNode(node) {
+  // 按住左键区域翻译的目标容器定位：
+  // - 翻译整篇文章（area）：优先最近的 article/main/[role=main] 等文章框架；
+  // - 翻译最近区域（region）：优先“最近的、包含多个文字块”的容器，
+  //   在 Outlook 中即邮件正文容器本身，不会把上方标题栏圈进来；
+  // 两种模式下未命中时都退回鼠标上方最外层块级容器。
+  #findMouseHoverAreaNode(node, scopeMode = OPT_MOUSE_HOVER_TRANS_AREA) {
     let el = node;
     if (el?.nodeType === Node.TEXT_NODE) {
       el = el.parentElement;
@@ -1765,7 +1809,11 @@ export class Translator {
       topmostBlock = parent;
       current = parent;
     }
-    // 语义化文章容器优先；其次是最近的“多段落区域”（邮件正文等）；最后才退回最外层块级容器
+    if (scopeMode === OPT_MOUSE_HOVER_TRANS_REGION) {
+      // 最近区域优先
+      return multi || strong || topmostBlock;
+    }
+    // 整篇文章优先
     return strong || multi || topmostBlock;
   }
 
@@ -1804,8 +1852,22 @@ export class Translator {
     if (!this.#isWithinRuleRoots(container)) {
       return;
     }
-    this.#scanNode(container);
-    const units = this.#collectHoverBlockUnits(container);
+    let units = this.#holdUnitsCache.get(container);
+    if (units) {
+      // 命中缓存：DOM 未变化时跳过对整个区域的重复扫描与遍历。
+      // 规则变更（如忽略选择器）走 updateRule 的轻量路径、不会触发重扫描，
+      // 因此这里对缓存单元做一次轻量过滤，保证规则实时生效。
+      units = units.filter(
+        (unit) => !unit.closest?.(this.#ignoreSelector)
+      );
+    } else {
+      this.#scanNode(container);
+      units = this.#collectHoverBlockUnits(container);
+      // 空结果不缓存：区域可能尚未扫描完成，下次按住再尝试
+      if (units.length > 0) {
+        this.#holdUnitsCache.set(container, units);
+      }
+    }
     if (units.length === 0) {
       this.#toggleTargetNode(
         this.#hoveredNode,
@@ -1827,18 +1889,46 @@ export class Translator {
       if (!this.#processedNodes.has(unit)) {
         this.#processNode(unit, {
           blockDisplay: this.#getMouseHoldBlockDisplay(),
+          limitConcurrency: true,
         });
       }
     });
+  }
+
+  // 并发限流：区域模式按住触发可能一次翻译几十个单元，
+  // 限制同时在途的 API 请求数，避免瞬间打满服务端限流配额。
+  #acquireHoldRequestSlot() {
+    if (this.#holdRequestConcurrency < this.#holdRequestLimit) {
+      this.#holdRequestConcurrency += 1;
+      // 快速路径直接返回 undefined，调用方同步继续，不引入额外微任务
+      return undefined;
+    }
+    return new Promise((resolve) => {
+      this.#holdRequestWaiters.push(resolve);
+    });
+  }
+
+  #releaseHoldRequestSlot() {
+    const next = this.#holdRequestWaiters.shift();
+    if (next) {
+      next(); // 名额直接转给下一个等待者，在途总数保持不变
+    } else {
+      this.#holdRequestConcurrency -= 1;
+    }
   }
 
   // 收集区域内最外层（互不包含）的已观察翻译单元
   #collectHoverBlockUnits(container) {
     const units = [];
     const maxLength = Number(this.#setting.maxLength) || 100000;
-    const visit = (node) => {
+    const visit = (node, isRoot) => {
       if (!Translator.isElementOrFragment(node)) return;
-      if (node.closest?.(this.#ignoreSelector)) return;
+      // 根节点需检查整条祖先链；递归进入的子节点其祖先已在上一层验证过，
+      // 只需 matches 检查自身，避免每个节点都重复遍历祖先链。
+      const isIgnored = isRoot
+        ? node.closest?.(this.#ignoreSelector)
+        : node.matches?.(this.#ignoreSelector);
+      if (isIgnored) return;
       if (this.#observedNodes.has(node)) {
         // 超大容器不适合作为单一翻译单元（会超过接口长度限制），继续下钻到子单元
         const isOversized = (node.textContent || "").trim().length > maxLength;
@@ -1849,10 +1939,10 @@ export class Translator {
       // 即使节点自身被观察也继续下钻：混合容器（自身含直接文本 + 块级子节点）
       // 需要同时翻译其直接文本与子单元，避免只翻译第一行/跳过块级子节点。
       for (const child of node.children || []) {
-        visit(child);
+        visit(child, false);
       }
     };
-    visit(container);
+    visit(container, true);
     return units;
   }
 
@@ -2076,6 +2166,9 @@ export class Translator {
 
   // 处理“脏容器”
   #rescanContainer(changedNode) {
+    // DOM 发生变化，按住翻译的区域单元缓存不再可靠，全部失效
+    this.#holdUnitsCache = new WeakMap();
+
     const container = this.#findChangeContainer(changedNode);
     if (!container) return;
 
@@ -2939,6 +3032,8 @@ export class Translator {
     } = this.#setting;
     const parentNode = hostNode.parentElement;
     const hideOrigin = transOnly === "true";
+    // 在 try 外声明，供 catch 分支判断本译文容器是否已被还原移除
+    let wrapper = null;
 
     try {
       const [processedString, placeholderMap] = this.#serializeForTranslation(
@@ -2947,7 +3042,7 @@ export class Translator {
       );
       if (this.#isInvalidText(processedString)) return;
 
-      const wrapper = document.createElement(this.#translationTagName);
+      wrapper = document.createElement(this.#translationTagName);
       wrapper.className = `${Translator.KISS_CLASS.warpper} notranslate`;
 
       const inner = document.createElement(transTag);
@@ -3038,6 +3133,8 @@ export class Translator {
         ? (chunk) => {
             // 防过期控制，若本轮翻译请求已因用户点击关闭或被新请求覆盖，则立刻抛弃
             if (this.#runId !== currentRunId) return;
+            // 容器已被还原移除时同样停止流式写入，避免向脱离文档的节点空转渲染
+            if (!wrapper.isConnected) return;
             const { text, isComplete } = chunk;
             if (!text) return;
 
@@ -3059,8 +3156,27 @@ export class Translator {
         : null;
 
       // 2. 发起真实的翻译网络请求
-      const { trText: translatedText, isSame: isSameLang } =
-        await this.#translateFetch(processedString, deLang, onStreamChunk);
+      // 区域模式按住触发可能一次翻译几十个单元，先获取并发名额再发请求，
+      // 把同时在途的请求数限制在 #holdRequestLimit 内，避免打满服务端限流配额。
+      if (options.limitConcurrency) {
+        const wait = this.#acquireHoldRequestSlot();
+        if (wait) await wait;
+      }
+      let translatedText;
+      let isSameLang;
+      try {
+        const result = await this.#translateFetch(
+          processedString,
+          deLang,
+          onStreamChunk
+        );
+        translatedText = result.trText;
+        isSameLang = result.isSame;
+      } finally {
+        if (options.limitConcurrency) {
+          this.#releaseHoldRequestSlot();
+        }
+      }
 
       // 请求完成后，立刻注销多余的 RAF 定时监听器，防止内存泄漏
       if (rafId) {
@@ -3071,6 +3187,12 @@ export class Translator {
       if (this.#runId !== currentRunId) {
         throw new Error("Request terminated");
       }
+
+      // 还原/清理（如区域模式按住第二次）可能已把本译文容器从文档移除，
+      // 此时丢弃过期结果：继续执行会把包裹/隐藏原文等 DOM 变更作用到已还原的
+      // 原文上（仅译文模式下原文会被搬走消失），并把脱离文档的 wrapper 重新
+      // 登记进 #translationNodes 造成状态泄漏。
+      if (!wrapper.isConnected) return;
 
       // 如果翻译文本为空，或者识别出来的源语言与目标语言一致，则移除临时的翻译 Loading 容器
       if (!translatedText || isSameLang) {
@@ -3154,6 +3276,11 @@ export class Translator {
         }
       }
     } catch (err) {
+      // 容器已被还原移除时丢弃过期失败结果，避免 “Request terminated” 分支的
+      // #cleanupDirectTranslations(hostNode) 误删宿主上随后产生的新译文，
+      // 也避免在已脱离文档的容器里渲染重试按钮。
+      if (wrapper && !wrapper.isConnected) return;
+
       const errorText = this.#formatTranslateError(err);
       kissLog("translate group error: ", errorText);
       if (err?.message === "Request terminated") {
@@ -3163,18 +3290,18 @@ export class Translator {
 
       // 失败重试按钮
       try {
-        const wrapper = hostNode.querySelector(
+        const lastWrapper = hostNode.querySelector(
           `:scope > .${Translator.KISS_CLASS.warpper}:last-of-type`
         );
-        if (wrapper) {
-          const inner = wrapper.querySelector(
+        if (lastWrapper) {
+          const inner = lastWrapper.querySelector(
             `.${Translator.KISS_CLASS.inner}`
           );
           if (inner) {
             inner.textContent = "";
             const retryNode = this.#createRetryErrorNode(errorText, () => {
               this.#withViewportAnchor(() => {
-                wrapper.remove();
+                lastWrapper.remove();
               });
               this.#processedNodes.delete(hostNode);
               this.#translateNodeGroup(nodes, hostNode, deLang, options);
@@ -4254,7 +4381,7 @@ overflow-wrap: anywhere !important;`;
       mouseHoverKey2Hold = false,
     } = this.#setting.mouseHoverSetting;
     const hasMouseHold = mouseHoverKeyHold || mouseHoverKey2Hold;
-    if (hasMouseHold) {
+    if (hasMouseHold && this.#isHoldSupportedByDevice()) {
       this.#registerMouseHoldHandler();
     }
     if (
@@ -4294,6 +4421,7 @@ overflow-wrap: anywhere !important;`;
     this.#removeKeydownHandler2?.();
     this.#removeMouseHoldHandlers?.();
     this.#cancelMouseHold();
+    this.#holdUnitsCache = new WeakMap();
   }
 
   #enableTransOnlyRevert() {
