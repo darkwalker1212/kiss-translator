@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import EditIcon from "@mui/icons-material/Edit";
@@ -9,8 +9,13 @@ import Link from "@mui/material/Link";
 import { useSetting } from "../../hooks/Setting";
 import { useI18n } from "../../hooks/I18n";
 import { useAlert } from "../../hooks/Alert";
-import { isExt } from "../../libs/client";
+import { isAutoTranslateClipboardSupported, isExt } from "../../libs/client";
 import { browser } from "../../libs/browser";
+import {
+  CLIPBOARD_READ_PERMISSION,
+  hasClipboardReadPermission,
+  requestClipboardReadPermission,
+} from "../../libs/clipboard";
 import Grid from "@mui/material/Grid";
 
 import {
@@ -121,6 +126,83 @@ export function ExtCommands() {
   );
 }
 
+export function AutoTranslateClipboardSetting({ value, onChange }) {
+  const i18n = useI18n();
+  const alert = useAlert();
+  const [hasPermission, setHasPermission] = useState(null);
+
+  const refreshPermission = useCallback(async () => {
+    setHasPermission(await hasClipboardReadPermission());
+  }, []);
+
+  useEffect(() => {
+    refreshPermission();
+
+    const handlePermissionChange = (permissions) => {
+      if (permissions?.permissions?.includes(CLIPBOARD_READ_PERMISSION)) {
+        refreshPermission();
+      }
+    };
+    browser?.permissions?.onAdded?.addListener?.(handlePermissionChange);
+    browser?.permissions?.onRemoved?.addListener?.(handlePermissionChange);
+
+    return () => {
+      browser?.permissions?.onAdded?.removeListener?.(handlePermissionChange);
+      browser?.permissions?.onRemoved?.removeListener?.(handlePermissionChange);
+    };
+  }, [refreshPermission]);
+
+  const enableAutoTranslate = async () => {
+    const granted = await requestClipboardReadPermission();
+    setHasPermission(granted);
+    if (granted) {
+      onChange(true);
+      alert.success(i18n("clipboard_permission_granted"));
+    } else {
+      onChange(false);
+      alert.warning(i18n("clipboard_permission_denied"));
+    }
+  };
+
+  const handleChange = async (event) => {
+    if (event.target.value) {
+      await enableAutoTranslate();
+    } else {
+      onChange(false);
+    }
+  };
+
+  return (
+    <Grid item xs={12} sm={12} md={6} lg={3}>
+      <TextField
+        select
+        fullWidth
+        size="small"
+        name="autoTranslateClipboard"
+        value={value}
+        label={i18n("auto_translate_clipboard")}
+        onChange={handleChange}
+        helperText={
+          value && hasPermission === false ? (
+            <Link
+              component="button"
+              type="button"
+              onClick={enableAutoTranslate}
+            >
+              {i18n("clipboard_permission_required")}
+            </Link>
+          ) : (
+            i18n("auto_translate_clipboard_helper")
+          )
+        }
+      >
+        <MenuItem value={true}>{i18n("enable")}</MenuItem>
+        <MenuItem value={false}>{i18n("disable")}</MenuItem>
+      </TextField>
+    </Grid>
+  );
+}
+
 /**
  * 基本查词/运行设置中心页面 (Settings)
  */
@@ -192,6 +274,8 @@ export default function Settings() {
     logLevel = 1,
     preInit = true,
     skipLangs = [],
+    translateVariants = true,
+    autoTranslateClipboard = false,
   } = setting;
   // 解构 FAB 悬浮球的显隐状态及点击后的默认交互行为
   const {
@@ -255,6 +339,14 @@ export default function Settings() {
                 <MenuItem value={false}>{i18n("disable")}</MenuItem>
               </TextField>
             </Grid>
+            {isAutoTranslateClipboardSupported && (
+              <AutoTranslateClipboardSetting
+                value={autoTranslateClipboard}
+                onChange={(value) =>
+                  updateSetting({ autoTranslateClipboard: value })
+                }
+              />
+            )}
             {/* 点击悬浮球时触发的行为 (直接展示菜单或立即启动全文双语翻译) */}
             <Grid item xs={12} sm={12} md={6} lg={3}>
               <TextField
@@ -394,6 +486,22 @@ export default function Settings() {
                     {item}
                   </MenuItem>
                 ))}
+              </TextField>
+            </Grid>
+            {/* 是否翻译同一语言的不同变体，例如简体中文与繁体中文 */}
+            <Grid item xs={12} sm={12} md={6} lg={3}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                name="translateVariants"
+                value={translateVariants}
+                label={i18n("translate_variants")}
+                helperText={i18n("translate_variants_helper")}
+                onChange={handleChange}
+              >
+                <MenuItem value={true}>{i18n("enable")}</MenuItem>
+                <MenuItem value={false}>{i18n("disable")}</MenuItem>
               </TextField>
             </Grid>
             {/* 日志记录详细层级 (Error/Info/Debug 等) */}

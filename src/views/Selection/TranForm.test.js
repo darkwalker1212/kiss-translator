@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import TranForm from "./TranForm";
 import { apiDict } from "../../apis";
+import { tryDetectLang } from "../../libs/detect";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,11 +27,13 @@ jest.mock("react-markdown", () => {
 jest.mock("./TranCont", () => {
   const React = require("react");
 
-  return ({ apiSlug, text }) =>
+  return ({ apiSlug, text, toLang, translateVariants }) =>
     React.createElement("div", {
       "data-testid": "tran-cont",
       "data-api-slug": apiSlug,
       "data-text": text,
+      "data-to-lang": toLang,
+      "data-translate-variants": String(translateVariants),
     });
 });
 
@@ -201,6 +204,7 @@ describe("TranForm AI dictionary tab", () => {
 describe("TranForm translation service selection", () => {
   beforeEach(() => {
     apiDict.mockReset();
+    tryDetectLang.mockResolvedValue("en");
     document.body.innerHTML = "";
   });
 
@@ -222,6 +226,44 @@ describe("TranForm translation service selection", () => {
         (element) => element.dataset.text
       )
     ).toEqual(["First line Second line", "First line Second line"]);
+
+    act(() => root.unmount());
+  });
+
+  test("switches to the secondary target when Chinese variants are disabled", async () => {
+    tryDetectLang.mockResolvedValue("zh-TW");
+    const { container, root } = renderTranForm({
+      text: "繁體中文",
+      apiSlugs: ["openai"],
+      fromLang: "auto",
+      toLang: "zh-CN",
+      toLang2: "en",
+      translateVariants: false,
+    });
+    await flushEffects();
+
+    const translation = container.querySelector('[data-testid="tran-cont"]');
+    expect(translation.dataset.toLang).toBe("en");
+    expect(translation.dataset.translateVariants).toBe("false");
+
+    act(() => root.unmount());
+  });
+
+  test("keeps the primary target when Chinese variants are enabled", async () => {
+    tryDetectLang.mockResolvedValue("zh-TW");
+    const { container, root } = renderTranForm({
+      text: "繁體中文",
+      apiSlugs: ["openai"],
+      fromLang: "auto",
+      toLang: "zh-CN",
+      toLang2: "en",
+      translateVariants: true,
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="tran-cont"]').dataset.toLang
+    ).toBe("zh-CN");
 
     act(() => root.unmount());
   });
@@ -310,5 +352,121 @@ describe("TranForm translation service selection", () => {
     act(() => {
       root.unmount();
     });
+  });
+});
+
+describe("TranForm input focus and external text synchronization", () => {
+  beforeEach(() => {
+    apiDict.mockReset();
+    tryDetectLang.mockResolvedValue("en");
+    document.body.innerHTML = "";
+  });
+
+  test("focuses the original text input when auto focus is enabled", async () => {
+    const { container, root } = renderTranForm({
+      text: "",
+      simpleStyle: false,
+      autoFocusInput: true,
+    });
+    await flushEffects();
+
+    expect(document.activeElement).toBe(container.querySelector("textarea"));
+    act(() => root.unmount());
+  });
+
+  test("does not focus the original text input when auto focus is disabled", async () => {
+    const { container, root } = renderTranForm({
+      text: "bug",
+      simpleStyle: false,
+      autoFocusInput: false,
+    });
+    await flushEffects();
+
+    expect(document.activeElement).not.toBe(
+      container.querySelector("textarea")
+    );
+    act(() => root.unmount());
+  });
+
+  test("focuses after asynchronous initialization allows auto focus", async () => {
+    const props = {
+      text: "",
+      simpleStyle: false,
+      autoFocusInput: false,
+    };
+    const { container, root } = renderTranForm(props);
+    await flushEffects();
+    const input = container.querySelector("textarea");
+    expect(document.activeElement).not.toBe(input);
+
+    act(() => {
+      root.render(
+        <TranForm
+          text=""
+          setText={jest.fn()}
+          apiSlugs={[]}
+          fromLang="en"
+          toLang="zh-CN"
+          toLang2="-"
+          transApis={[]}
+          simpleStyle={false}
+          langDetector="-"
+          enDict="Bing"
+          enSug="-"
+          aiDictApiSlug="-"
+          autoFocusInput
+        />
+      );
+    });
+    await flushEffects();
+
+    expect(document.activeElement).toBe(input);
+    act(() => root.unmount());
+  });
+
+  test("keeps clipboard text visible and submits it after blur while editing", async () => {
+    const setText = jest.fn();
+    const transApis = [];
+    const { container, root } = renderTranForm({
+      text: "",
+      setText,
+      transApis,
+      simpleStyle: false,
+      autoFocusInput: true,
+      syncExternalTextWhileEditing: true,
+    });
+    await flushEffects();
+
+    act(() => {
+      root.render(
+        <TranForm
+          text="bug"
+          setText={setText}
+          apiSlugs={[]}
+          fromLang="en"
+          toLang="zh-CN"
+          toLang2="-"
+          transApis={transApis}
+          simpleStyle={false}
+          langDetector="-"
+          enDict="Bing"
+          enSug="-"
+          aiDictApiSlug="-"
+          autoFocusInput={false}
+          syncExternalTextWhileEditing
+        />
+      );
+    });
+    await flushEffects();
+
+    const input = container.querySelector("textarea");
+    expect(input.value).toBe("bug");
+
+    await act(async () => {
+      input.blur();
+      await Promise.resolve();
+    });
+    expect(setText).toHaveBeenLastCalledWith("bug");
+    act(() => root.unmount());
   });
 });

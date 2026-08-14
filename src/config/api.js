@@ -50,6 +50,7 @@ export const OPT_SUG_MAP = new Set(OPT_SUG_ALL);
 export const OPT_TRANS_BUILTINAI = "BuiltinAI"; // 浏览器内置 Gemini AI 翻译
 export const OPT_TRANS_GOOGLE = "Google"; // 谷歌翻译服务
 export const OPT_TRANS_GOOGLE_2 = "Google2"; // 谷歌翻译 pa 网页 API (支持大批量 HTML)
+export const OPT_TRANS_GOOGLE_CLOUD = "GoogleCloud"; // Google Cloud Translation Basic API
 export const OPT_TRANS_MICROSOFT = "Microsoft"; // 微软翻译服务
 export const OPT_TRANS_AZUREAI = "AzureAI"; // 微软 Azure 翻译
 export const OPT_TRANS_DEEPSEEK = "DeepSeek"; // DeepSeek 深度求索 AI 翻译
@@ -57,6 +58,7 @@ export const OPT_TRANS_OPENCODEGO = "OpenCodeGo"; // OpenCode Go AI 翻译订阅
 export const OPT_TRANS_SILICONFLOW = "SiliconFlow"; // 硅基流动 AI 翻译 (云端部署大模型)
 export const OPT_TRANS_XIAOMIMIMO = "XiaomiMimo"; // 小米米莫 AI 翻译
 export const OPT_TRANS_ALIYUNBAILIAN = "AliyunBailian"; // 阿里云百炼大模型翻译
+export const OPT_TRANS_QWENMT = "QwenMT"; // 阿里云百炼 Qwen-MT 专用翻译
 export const OPT_TRANS_CEREBRAS = "Cerebras"; // Cerebras AI 翻译极速推理服务
 export const OPT_TRANS_ZAI = "Zai"; // 智谱 AI 翻译服务
 export const OPT_TRANS_DEEPL = "DeepL"; // DeepL 官方专业翻译 API
@@ -66,6 +68,8 @@ export const OPT_TRANS_EPHONEAI = "ePhoneAI"; // ePhone AI 翻译服务
 export const OPT_TRANS_BAIDU = "Baidu"; // 百度翻译 API
 export const OPT_TRANS_TENCENT = "Tencent"; // 腾讯翻译君 API
 export const OPT_TRANS_VOLCENGINE = "Volcengine"; // 火山翻译 API
+export const OPT_TRANS_YANDEX = "Yandex"; // Yandex Cloud Translate API
+export const OPT_TRANS_YANDEXFREE = "YandexFree"; // Yandex 免费网页翻译接口
 export const OPT_TRANS_OPENAI = "OpenAI"; // OpenAI 官方大模型 API 翻译
 export const OPT_TRANS_GEMINI = "Gemini"; // 谷歌 Gemini API 翻译 (原版接口形式)
 export const OPT_TRANS_GEMINI_2 = "Gemini2"; // 谷歌 Gemini API 翻译 (OpenAI 兼容接口形式)
@@ -81,6 +85,7 @@ export const OPT_ALL_TRANS_TYPES = [
   OPT_TRANS_BUILTINAI,
   OPT_TRANS_GOOGLE,
   OPT_TRANS_GOOGLE_2,
+  OPT_TRANS_GOOGLE_CLOUD,
   OPT_TRANS_MICROSOFT,
   OPT_TRANS_AZUREAI,
   // OPT_TRANS_BAIDU,
@@ -89,10 +94,13 @@ export const OPT_ALL_TRANS_TYPES = [
   OPT_TRANS_SILICONFLOW,
   OPT_TRANS_XIAOMIMIMO,
   OPT_TRANS_ALIYUNBAILIAN,
+  OPT_TRANS_QWENMT,
   OPT_TRANS_CEREBRAS,
   OPT_TRANS_ZAI,
   OPT_TRANS_TENCENT,
   OPT_TRANS_VOLCENGINE,
+  OPT_TRANS_YANDEX,
+  OPT_TRANS_YANDEXFREE,
   OPT_TRANS_DEEPL,
   OPT_TRANS_DEEPLFREE,
   OPT_TRANS_DEEPLX,
@@ -128,6 +136,8 @@ export const API_SPE_TYPES = {
     OPT_TRANS_BAIDU,
     OPT_TRANS_TENCENT,
     OPT_TRANS_VOLCENGINE,
+    OPT_TRANS_YANDEXFREE,
+    OPT_TRANS_QWENMT,
   ]),
   // 大语言模型 AI 翻译引擎
   ai: new Set([
@@ -151,11 +161,14 @@ export const API_SPE_TYPES = {
   // 支持多 API Key 轮询/备用的引擎
   mulkeys: new Set([
     OPT_TRANS_AZUREAI,
+    OPT_TRANS_GOOGLE_CLOUD,
+    OPT_TRANS_YANDEX,
     OPT_TRANS_DEEPSEEK,
     OPT_TRANS_OPENCODEGO,
     OPT_TRANS_SILICONFLOW,
     OPT_TRANS_XIAOMIMIMO,
     OPT_TRANS_ALIYUNBAILIAN,
+    OPT_TRANS_QWENMT,
     OPT_TRANS_CEREBRAS,
     OPT_TRANS_ZAI,
     OPT_TRANS_DEEPL,
@@ -181,6 +194,8 @@ export const API_SPE_TYPES = {
     OPT_TRANS_CEREBRAS,
     OPT_TRANS_ZAI,
     OPT_TRANS_GOOGLE_2,
+    OPT_TRANS_GOOGLE_CLOUD,
+    OPT_TRANS_YANDEX,
     OPT_TRANS_MICROSOFT,
     OPT_TRANS_TENCENT,
     OPT_TRANS_DEEPL,
@@ -265,96 +280,98 @@ const THINKING_EFFORT_RANK = {
   xhigh: 5,
   max: 6,
 };
+
+/**
+ * 将思考强度值转换为设置页可直接渲染的选项。
+ * @param {string[]} efforts 按强到弱排列的思考强度值。
+ * @returns {Array<{value: string, label: string}>} 带显示名称的强度选项。
+ */
 const toThinkingEffortOptions = (efforts = []) =>
   efforts.map((effort) => ({
     value: effort,
     label: THINKING_EFFORT_LABELS[effort] || effort,
   }));
 
-const OPENAI_COMPAT_CAPABILITY = {
-  protocol: "openai",
-  efforts: toThinkingEffortOptions(["high"]),
-  disableEffort: "none",
-};
-
-const createThinkingCapability = (protocol, efforts, extra = {}) => ({
-  protocol,
+/**
+ * 创建统一的模型思考能力对象。
+ * @param {string[]|null} efforts 模型支持的思考强度；null 表示没有强度参数。
+ * @param {Object} extra 协议开关、关闭方式等附加能力。
+ * @returns {Object} 标准化后的模型思考能力。
+ */
+const createThinkingCapability = (efforts, extra = {}) => ({
   efforts: efforts ? toThinkingEffortOptions(efforts) : null,
   ...extra,
 });
 
-// 保留静态映射供旧调用方判断接口是否显示思考设置；具体模型能力统一由
-// getThinkingCapability 解析，避免界面和请求层各自维护一套等级列表。
-export const THINKING_PARAM_MAP = {
-  [OPT_TRANS_DEEPSEEK]: { type: "deepseek" },
-  [OPT_TRANS_OPENCODEGO]: { type: "deepseek" },
-  [OPT_TRANS_SILICONFLOW]: { type: "siliconflow" },
-  [OPT_TRANS_XIAOMIMIMO]: { type: "deepseek" },
-  [OPT_TRANS_ALIYUNBAILIAN]: { type: "aliyunbailian" },
-  [OPT_TRANS_CEREBRAS]: { type: "openai" },
-  [OPT_TRANS_ZAI]: { type: "deepseek" },
-  [OPT_TRANS_EPHONEAI]: { type: "openai" },
-  [OPT_TRANS_OPENAI]: { type: "openai" },
-  [OPT_TRANS_GEMINI]: { type: "gemini" },
-  [OPT_TRANS_GEMINI_2]: { type: "gemini" },
-  [OPT_TRANS_CLAUDE]: { type: "claude" },
-  [OPT_TRANS_OLLAMA]: { type: "openai" },
-  [OPT_TRANS_OPENROUTER]: { type: "openrouter" },
-  [OPT_TRANS_ORCAROUTER]: { type: "openai" },
-};
+/**
+ * 创建通过 reasoning_effort 开启、通过 none 关闭的 OpenAI 兼容能力。
+ * @param {string[]} efforts 模型支持的思考强度。
+ * @param {Object} [defaults] 模型公布的默认思考行为。
+ * @returns {Object} OpenAI 兼容模型的统一思考能力。
+ */
+const createOpenAIThinkingCapability = (efforts, defaults = {}) =>
+  createThinkingCapability(efforts, {
+    enable: "effort",
+    disable: "none",
+    ...defaults,
+  });
 
+/**
+ * 根据 OpenAI 模型名称解析已确认的思考能力。
+ * @param {string} model OpenAI 或带 openai/ 前缀的模型名称。
+ * @returns {Object|null} 已知模型的思考能力；未知模型返回 null。
+ */
 const getOpenAIThinkingCapability = (model = "") => {
-  const normalizedModel = String(model).trim().toLowerCase();
+  const normalizedModel = String(model)
+    .trim()
+    .toLowerCase()
+    .replace(/^openai\//, "");
 
   if (/^gpt-5\.6(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability(
-      "openai",
-      ["max", "xhigh", "high", "medium", "low"],
-      { disableEffort: "none" }
-    );
+    return createOpenAIThinkingCapability([
+      "max",
+      "xhigh",
+      "high",
+      "medium",
+      "low",
+    ]);
   }
   if (/^gpt-5\.(?:4|2)-pro(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability("openai", ["xhigh", "high", "medium"], {
-      disableEffort: "none",
-    });
+    return createOpenAIThinkingCapability(["xhigh", "high", "medium"]);
   }
   if (/^gpt-5-pro(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability("openai", ["high"], {
-      disableEffort: "none",
-    });
+    return createOpenAIThinkingCapability(["high"]);
   }
   if (/^gpt-5\.[23]-codex(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability(
-      "openai",
-      ["xhigh", "high", "medium", "low"],
-      { disableEffort: "none" }
-    );
+    return createOpenAIThinkingCapability(["xhigh", "high", "medium", "low"]);
   }
   if (/^gpt-5\.(?:5|4|2)(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability(
-      "openai",
-      ["xhigh", "high", "medium", "low"],
-      { disableEffort: "none" }
-    );
+    return createOpenAIThinkingCapability(["xhigh", "high", "medium", "low"]);
   }
-  if (/^gpt-5\.1(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability("openai", ["high", "medium", "low"], {
-      disableEffort: "none",
+  if (/^gpt-5\.1(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizedModel)) {
+    return createOpenAIThinkingCapability(["high", "medium", "low"], {
+      // GPT-5.1 默认不推理；用户明确开启时应回落到最低非关闭强度 low。
+      defaultEnabled: false,
+      defaultEffort: "none",
     });
   }
+  if (/^gpt-5\.1(?:-|$)/.test(normalizedModel)) {
+    return createOpenAIThinkingCapability(["high", "medium", "low"]);
+  }
   if (/^gpt-5(?:-|$)/.test(normalizedModel)) {
-    return createThinkingCapability(
-      "openai",
-      ["high", "medium", "low", "minimal"],
-      { disableEffort: "none" }
-    );
+    return createOpenAIThinkingCapability(["high", "medium", "low", "minimal"]);
   }
 
-  // 文档无法确认的 OpenAI 兼容模型只发送最通用的 high/none，避免猜测 xhigh、minimal 等扩展等级。
-  return OPENAI_COMPAT_CAPABILITY;
+  return null;
 };
 
-const normalizeOpenRouterCapability = (model, metadata) => {
+/**
+ * 将设置页内存中的 OpenRouter reasoning 元数据转换为统一能力。
+ * @param {string} model 当前选中的模型名称。
+ * @param {Object|undefined} metadata 模型目录中当前模型的 reasoning 元数据。
+ * @returns {Object|null} 可确认的模型能力；元数据无效时返回 null。
+ */
+export const getOpenRouterThinkingCapability = (model, metadata) => {
   if (!metadata || metadata.model !== model) return null;
 
   const supportedEfforts = Array.isArray(metadata.supportedEfforts)
@@ -365,12 +382,20 @@ const normalizeOpenRouterCapability = (model, metadata) => {
     : [];
   if (!supportedEfforts.length) return null;
 
-  return createThinkingCapability("openrouter", supportedEfforts, {
-    explicitEnable: true,
-    disableEffort: metadata.mandatory ? null : "none",
+  return createThinkingCapability(supportedEfforts, {
+    enable: "effort",
+    disable: metadata.mandatory ? null : "none",
+    // 默认值只参与设置页归一化，不会进入持久化配置和请求生成器。
+    defaultEffort: metadata.defaultEffort,
+    defaultEnabled: metadata.defaultEnabled,
   });
 };
 
+/**
+ * 根据 Claude 模型名称解析原生 adaptive thinking 能力。
+ * @param {string} model Claude 模型名称。
+ * @returns {Object|null} 已知模型的思考能力；旧模型或未知模型返回 null。
+ */
 const getClaudeThinkingCapability = (model = "") => {
   const normalizedModel = String(model).trim().toLowerCase();
   const supportsAdaptiveThinking =
@@ -385,91 +410,221 @@ const getClaudeThinkingCapability = (model = "") => {
   const mandatory =
     /^claude-(?:fable|mythos)-5(?:-|$)/.test(normalizedModel) ||
     normalizedModel.startsWith("claude-mythos-preview");
-  return createThinkingCapability(
-    "claude",
-    ["max", "xhigh", "high", "medium", "low"],
-    {
-      explicitEnable: true,
-      explicitDisable: !mandatory,
+  return createThinkingCapability(["max", "xhigh", "high", "medium", "low"], {
+    enable: "explicit",
+    disable: mandatory ? null : "explicit",
+  });
+};
+
+/**
+ * 根据 Gemini 模型与请求协议解析思考强度和关闭方式。
+ * @param {Object} options Gemini 能力解析参数。
+ * @param {string} options.apiType Gemini 原生或 OpenAI 兼容接口类型。
+ * @param {string} [options.url] 实际请求地址，用于区分 Interactions 与 Generate Content。
+ * @param {string} [options.model] Gemini 模型名称。
+ * @returns {Object|null} 已知模型的思考能力；未知模型返回 null。
+ */
+const resolveGeminiCapability = ({ apiType, url = "", model = "" }) => {
+  const efforts = getGeminiThinkingEfforts({ apiType, model });
+  if (!efforts) return null;
+
+  const normalizedModel = normalizeGeminiModelName(model);
+  // disable 记录原生关闭方式；null 表示只能降到模型最低思考强度。
+  let disable = null;
+  if (apiType === OPT_TRANS_GEMINI_2 && isGemini25NonPro(normalizedModel)) {
+    disable = "none";
+  } else if (
+    apiType === OPT_TRANS_GEMINI &&
+    isGeminiInteractionsUrl(url) &&
+    isGemini25FlashLite(normalizedModel)
+  ) {
+    disable = "omit";
+  } else if (
+    apiType === OPT_TRANS_GEMINI &&
+    !isGeminiInteractionsUrl(url) &&
+    isGemini25NonPro(normalizedModel)
+  ) {
+    disable = 0;
+  }
+
+  let defaultEffort = null;
+  let defaultEnabled = true;
+  if (isGemini25(normalizedModel)) {
+    defaultEnabled = !isGemini25FlashLite(normalizedModel);
+    // Generate Content 使用 -1 明确表达 Gemini 2.5 的动态思考默认值；
+    // Interactions 与 OpenAI-compatible 省略强度即可采用服务端默认行为。
+    if (
+      defaultEnabled &&
+      apiType === OPT_TRANS_GEMINI &&
+      !isGeminiInteractionsUrl(url)
+    ) {
+      defaultEffort = -1;
     }
+  } else if (
+    normalizedModel.startsWith("gemini-3.6-flash") ||
+    (normalizedModel.startsWith("gemini-3.5-flash") &&
+      !normalizedModel.startsWith("gemini-3.5-flash-lite"))
+  ) {
+    defaultEffort = "medium";
+  } else if (
+    normalizedModel.includes("flash-lite") ||
+    isGemini31FlashLiteImage(normalizedModel)
+  ) {
+    defaultEffort = "minimal";
+  } else if (
+    isGemini31Pro(normalizedModel) ||
+    isGemini3Pro(normalizedModel) ||
+    normalizedModel.startsWith("gemini-3-flash")
+  ) {
+    defaultEffort = "high";
+  }
+
+  return createThinkingCapability(
+    efforts.map((item) => item.value),
+    { enable: "effort", disable, defaultEffort, defaultEnabled }
   );
 };
 
 /**
- * 返回当前接口和模型真正可用的思考能力。未知聚合接口与未知模型按 OpenAI
- * 兼容基线处理；Gemini 和 Claude 仍保留各自原生协议，不能混用请求字段。
+ * 为能力固定的接口创建注册表 resolver。
+ * @param {string[]|null} efforts 接口统一支持的思考强度。
+ * @param {Object} extra 接口统一的开关和字段能力。
+ * @returns {Function} 无需模型判断、直接返回固定能力的 resolver。
+ */
+const resolveFixedCapability = (efforts, extra) => () =>
+  createThinkingCapability(efforts, extra);
+
+// 新增同协议接口只需登记 adapter；新增模型能力则只修改对应 resolver。
+export const THINKING_API_REGISTRY = {
+  [OPT_TRANS_DEEPSEEK]: {
+    adapter: "deepseek",
+    resolveCapability: resolveFixedCapability(["max", "high"], {
+      enable: "explicit",
+      disable: "explicit",
+    }),
+  },
+  [OPT_TRANS_OPENCODEGO]: {
+    adapter: "deepseek",
+    resolveCapability: resolveFixedCapability(["max", "high"], {
+      enable: "explicit",
+      disable: "explicit",
+    }),
+  },
+  [OPT_TRANS_XIAOMIMIMO]: {
+    adapter: "deepseek",
+    resolveCapability: resolveFixedCapability(null, {
+      enable: "explicit",
+      disable: "explicit",
+    }),
+  },
+  [OPT_TRANS_ZAI]: {
+    adapter: "deepseek",
+    resolveCapability: resolveFixedCapability(null, {
+      enable: "explicit",
+      disable: "explicit",
+    }),
+  },
+  [OPT_TRANS_ALIYUNBAILIAN]: {
+    adapter: "boolean",
+    resolveCapability: resolveFixedCapability(null, {
+      enable: "explicit",
+      disable: "explicit",
+    }),
+  },
+  [OPT_TRANS_SILICONFLOW]: {
+    adapter: "siliconflow",
+    resolveCapability: resolveFixedCapability(
+      ["max", "high", "medium", "low", "minimal"],
+      { enable: "explicit", disable: "explicit" }
+    ),
+  },
+  [OPT_TRANS_CEREBRAS]: {
+    adapter: "openai",
+    resolveCapability: ({ model = "" }) =>
+      /^gpt-oss-120b(?:-|$)/i.test(model)
+        ? createOpenAIThinkingCapability(["high", "medium", "low"])
+        : null,
+  },
+  [OPT_TRANS_EPHONEAI]: {
+    adapter: "openai",
+    resolveCapability: ({ model }) => getOpenAIThinkingCapability(model),
+  },
+  [OPT_TRANS_OPENAI]: {
+    adapter: "openai",
+    resolveCapability: ({ model }) => getOpenAIThinkingCapability(model),
+  },
+  [OPT_TRANS_OLLAMA]: {
+    adapter: "openai",
+    resolveCapability: ({ model }) => getOpenAIThinkingCapability(model),
+  },
+  [OPT_TRANS_ORCAROUTER]: {
+    adapter: "openai",
+    resolveCapability: ({ model }) => getOpenAIThinkingCapability(model),
+  },
+  [OPT_TRANS_OPENROUTER]: {
+    adapter: "openrouter",
+    // OpenRouter 的动态能力仅来自设置页内存中的模型目录，不进入持久化配置和请求参数。
+    resolveCapability: ({ model, openRouterMetadata }) =>
+      getOpenRouterThinkingCapability(model, openRouterMetadata),
+  },
+  [OPT_TRANS_GEMINI]: {
+    adapter: "gemini",
+    resolveCapability: resolveGeminiCapability,
+  },
+  [OPT_TRANS_GEMINI_2]: {
+    adapter: "gemini",
+    resolveCapability: resolveGeminiCapability,
+  },
+  [OPT_TRANS_CLAUDE]: {
+    adapter: "claude",
+    resolveCapability: ({ model }) => getClaudeThinkingCapability(model),
+  },
+};
+
+/**
+ * 返回当前接口和模型可确认的思考能力。
+ * @param {Object} options 能力查询参数。
+ * @param {string} options.apiType 翻译接口类型。
+ * @param {string} [options.url] 实际请求地址。
+ * @param {string} [options.model] 当前模型名称。
+ * @param {Object} [options.openRouterMetadata] 设置页内存中的 OpenRouter 模型元数据。
+ * @returns {Object|null} 包含 adapter 的统一能力；未知接口或模型返回 null。
  */
 export const getThinkingCapability = ({
   apiType,
+  url = "",
   model = "",
-  thinkingCapabilities,
+  openRouterMetadata,
 }) => {
-  if (apiType === OPT_TRANS_GEMINI || apiType === OPT_TRANS_GEMINI_2) {
-    return createThinkingCapability(
-      "gemini",
-      getGeminiThinkingEfforts({ apiType, model }).map((item) => item.value)
-    );
-  }
-  if (apiType === OPT_TRANS_CLAUDE) {
-    return getClaudeThinkingCapability(model);
-  }
-  if (apiType === OPT_TRANS_OPENROUTER) {
-    return (
-      normalizeOpenRouterCapability(model, thinkingCapabilities) ||
-      createThinkingCapability("openrouter", ["high"], {
-        explicitEnable: true,
-        disableEffort: "none",
-      })
-    );
-  }
-  if (apiType === OPT_TRANS_OPENAI) {
-    return getOpenAIThinkingCapability(model);
-  }
-  if (apiType === OPT_TRANS_CEREBRAS && /^gpt-oss-120b(?:-|$)/i.test(model)) {
-    return createThinkingCapability("openai", ["high", "medium", "low"], {
-      explicitEnable: true,
-      disableEffort: "none",
-    });
-  }
-  if (apiType === OPT_TRANS_DEEPSEEK || apiType === OPT_TRANS_OPENCODEGO) {
-    return createThinkingCapability("deepseek", ["max", "high"], {
-      explicitEnable: true,
-      explicitDisable: true,
-    });
-  }
-  if (apiType === OPT_TRANS_XIAOMIMIMO || apiType === OPT_TRANS_ZAI) {
-    return createThinkingCapability("deepseek", null, {
-      explicitEnable: true,
-      explicitDisable: true,
-    });
-  }
-  if (apiType === OPT_TRANS_ALIYUNBAILIAN) {
-    return createThinkingCapability("aliyunbailian", null, {
-      explicitEnable: true,
-      explicitDisable: true,
-    });
-  }
-  if (apiType === OPT_TRANS_SILICONFLOW) {
-    return createThinkingCapability(
-      "siliconflow",
-      ["max", "high", "medium", "low", "minimal"],
-      { explicitEnable: true, explicitDisable: true }
-    );
-  }
-  if (THINKING_PARAM_MAP[apiType]) {
-    return OPENAI_COMPAT_CAPABILITY;
-  }
-  return null;
+  const registration = THINKING_API_REGISTRY[apiType];
+  if (!registration) return null;
+
+  const capability = registration.resolveCapability({
+    apiType,
+    url,
+    model,
+    openRouterMetadata,
+  });
+  return capability ? { adapter: registration.adapter, ...capability } : null;
 };
 
+/**
+ * 将用户选择的强度规范化为模型实际支持的最接近值。
+ * @param {string} effort 用户选择的思考强度或 _default。
+ * @param {Array<{value: string}>} supportedEfforts 模型支持的强度选项。
+ * @returns {string|null} 规范化后的强度；模型没有强度参数时返回 null。
+ */
 export const normalizeThinkingEffort = (effort, supportedEfforts = []) => {
   const supported = supportedEfforts.map((item) => item.value);
   if (!supported.length) return null;
-  if (!effort || effort === "_default") return supported[supported.length - 1];
+  // 接口默认由能力对象单独解析，不能再隐式等同于最高强度。
+  if (effort === null || effort === undefined || effort === "_default") {
+    return null;
+  }
   if (supported.includes(effort)) return effort;
 
   const targetRank = THINKING_EFFORT_RANK[effort];
-  if (targetRank === undefined) return supported[0];
+  if (targetRank === undefined) return null;
   return supported.reduce((closest, candidate) => {
     const distance = Math.abs(THINKING_EFFORT_RANK[candidate] - targetRank);
     const closestDistance = Math.abs(
@@ -480,82 +635,169 @@ export const normalizeThinkingEffort = (effort, supportedEfforts = []) => {
 };
 
 /**
- * auto 不注入参数；enabled 优先走显式开关，否则取最高等级；disabled
- * 优先显式关闭，不能关闭时降到模型最低等级。
+ * 根据模型公布的默认行为解析用户选择“接口默认”时的最终开启强度。
+ * @param {Object} capability 当前模型的统一思考能力。
+ * @returns {string|number|null} 具体默认强度、动态预算或省略强度标记。
  */
-export const resolveThinkingStrategy = ({
+const getDefaultThinkingEffort = (capability) => {
+  const efforts = capability.efforts || [];
+  const lowestEffort = efforts[efforts.length - 1]?.value ?? null;
+  if (
+    capability.defaultEnabled === false ||
+    capability.defaultEffort === "none"
+  ) {
+    // 模型默认关闭但用户明确开启时，使用最低支持强度保证真正开启。
+    return lowestEffort;
+  }
+  if (capability.defaultEffort === null) return null;
+  if (typeof capability.defaultEffort === "number") {
+    return capability.defaultEffort;
+  }
+  return efforts.some((effort) => effort.value === capability.defaultEffort)
+    ? capability.defaultEffort
+    : null;
+};
+
+/**
+ * 在配置阶段根据接口和模型能力，将用户选择归一化为最终持久化的两个思考字段。
+ * 该函数不会生成协议原生字段，也不会把模型能力写入返回结果。
+ * @param {Object} options 思考设置归一化参数。
+ * @param {string} options.apiType 翻译接口类型。
+ * @param {string} [options.url] 实际请求地址，用于识别 Gemini 协议。
+ * @param {string} [options.model] 当前模型名称。
+ * @param {"auto"|"enabled"|"disabled"} [options.thinkingMode] 用户选择的思考模式。
+ * @param {string|number|null} [options.thinkingEffort] 用户选择或已经确认的思考强度。
+ * @param {Object} [options.openRouterMetadata] 设置页内存中的 OpenRouter 模型元数据。
+ * @returns {{thinkingMode: string, thinkingEffort: string|number|null}} 最终可持久化的两个思考字段。
+ */
+export const normalizeThinkingSettings = ({
   apiType,
   url = "",
   model = "",
   thinkingMode = "disabled",
   thinkingEffort = "_default",
-  thinkingCapabilities,
+  openRouterMetadata,
 }) => {
+  if (thinkingMode === "auto") {
+    return { thinkingMode, thinkingEffort: "_default" };
+  }
+
   const capability = getThinkingCapability({
     apiType,
+    url,
     model,
-    thinkingCapabilities,
+    openRouterMetadata,
   });
-  if (!capability || thinkingMode === "auto") {
-    return { capability, action: "none", effort: null, fallback: false };
-  }
-  if (capability.protocol === "gemini") {
-    const strategy = getGeminiThinkingStrategy({
-      apiType,
-      url,
-      model,
-      thinkingMode,
-      thinkingEffort,
-    });
+  if (!capability) {
+    // OpenRouter 的具体强度只会由设置页目录确认；重新打开设置时允许直接沿用该最终值。
+    const hasConfirmedOpenRouterEffort =
+      apiType === OPT_TRANS_OPENROUTER &&
+      thinkingEffort !== undefined &&
+      thinkingEffort !== "_default";
     return {
-      capability,
-      action: strategy.field ? "effort" : "none",
-      effort: strategy.value,
-      fallback: strategy.fallback,
+      thinkingMode,
+      thinkingEffort: hasConfirmedOpenRouterEffort
+        ? thinkingEffort
+        : "_default",
     };
   }
 
-  const hasExplicitEffort = thinkingEffort && thinkingEffort !== "_default";
-  const normalizedEffort = normalizeThinkingEffort(
-    thinkingEffort,
-    capability.efforts || []
-  );
+  const hasExplicitEffort =
+    thinkingEffort !== null &&
+    thinkingEffort !== undefined &&
+    thinkingEffort !== "_default";
+  const normalizedEffort =
+    hasExplicitEffort && thinkingEffort === capability.defaultEffort
+      ? thinkingEffort
+      : normalizeThinkingEffort(thinkingEffort, capability.efforts || []);
   if (thinkingMode === "enabled") {
-    const useExplicitEnable = capability.explicitEnable && !hasExplicitEffort;
     return {
-      capability,
-      action: useExplicitEnable ? "enabled" : "effort",
-      effort: useExplicitEnable ? null : normalizedEffort,
-      fallback: false,
-    };
-  }
-  if (capability.explicitDisable) {
-    return { capability, action: "disabled", effort: null, fallback: false };
-  }
-  if (capability.disableEffort) {
-    return {
-      capability,
-      action: "effort",
-      effort: capability.disableEffort,
-      fallback: false,
+      thinkingMode,
+      thinkingEffort:
+        capability.enable === "explicit" && !hasExplicitEffort
+          ? null
+          : hasExplicitEffort
+            ? normalizedEffort
+            : getDefaultThinkingEffort(capability),
     };
   }
 
   const efforts = capability.efforts || [];
   return {
-    capability,
-    action: "effort",
-    effort: efforts[efforts.length - 1]?.value || null,
-    fallback: true,
+    thinkingMode,
+    thinkingEffort:
+      capability.disable === "explicit" || capability.disable === "omit"
+        ? null
+        : (capability.disable ?? efforts[efforts.length - 1]?.value ?? null),
   };
 };
 
+/**
+ * 对单个接口配置执行静态思考设置归一化，不处理 OpenRouter 的动态模型目录。
+ * @param {Object} apiSetting 原始接口配置。
+ * @returns {Object} 归一化后的接口配置；字段未变化时返回原对象引用。
+ */
+export const normalizeApiThinkingSetting = (apiSetting = {}) => {
+  if (!THINKING_API_REGISTRY[apiSetting.apiType]) return apiSetting;
+
+  const normalized = normalizeThinkingSettings(apiSetting);
+  if (
+    normalized.thinkingMode === apiSetting.thinkingMode &&
+    normalized.thinkingEffort === apiSetting.thinkingEffort
+  ) {
+    return apiSetting;
+  }
+  return { ...apiSetting, ...normalized };
+};
+
+/**
+ * 在配置加载、同步或导入后一次性归一化接口列表中的静态思考设置。
+ * @param {Array<Object>} transApis 原始翻译接口配置列表。
+ * @returns {Array<Object>} 归一化后的配置列表；无变化时返回原数组引用。
+ */
+export const normalizeApiThinkingSettings = (transApis = []) => {
+  if (!Array.isArray(transApis)) return transApis;
+
+  let hasChanges = false;
+  const normalizedApis = transApis.map((apiSetting) => {
+    const normalized = normalizeApiThinkingSetting(apiSetting);
+    if (normalized !== apiSetting) hasChanges = true;
+    return normalized;
+  });
+  return hasChanges ? normalizedApis : transApis;
+};
+
+/**
+ * 判断关闭思考时是否只能降到模型最低强度。
+ * @param {Object} options 判断参数。
+ * @param {Object|null} options.capability 当前模型的统一思考能力。
+ * @param {string} options.thinkingMode 用户选择的思考模式。
+ * @returns {boolean} 是否需要显示最低强度降级提示。
+ */
+export const isThinkingMinimumFallback = ({ capability, thinkingMode }) =>
+  Boolean(
+    capability &&
+      thinkingMode === "disabled" &&
+      capability.disable === null &&
+      capability.efforts?.length
+  );
+
+/**
+ * 规范化 Gemini 模型名称，移除资源名前缀并统一为小写。
+ * @param {string} model 原始 Gemini 模型名称。
+ * @returns {string} 规范化后的模型名称。
+ */
 export const normalizeGeminiModelName = (model = "") =>
   String(model)
     .trim()
     .replace(/^models\//i, "")
     .toLowerCase();
 
+/**
+ * 判断请求地址是否使用 Gemini Interactions 协议。
+ * @param {string} url Gemini 请求地址。
+ * @returns {boolean} 是否为 Interactions 端点。
+ */
 export const isGeminiInteractionsUrl = (url = "") =>
   /\/v1(?:beta\d*)?\/interactions(?:[/?]|$)/i.test(url);
 
@@ -565,8 +807,7 @@ const GEMINI_EFFORT_OPTIONS = {
   low: { value: "low", label: "Low" },
   minimal: { value: "minimal", label: "Minimal" },
 };
-const GEMINI_EFFORT_RANK = { minimal: 0, low: 1, medium: 2, high: 3 };
-const GEMINI25_BUDGETS = {
+export const GEMINI25_BUDGETS = {
   minimal: 1024,
   low: 1024,
   medium: 8192,
@@ -583,19 +824,37 @@ const isGemini3Pro = (model) => model.startsWith("gemini-3-pro");
 const isGemini31FlashLiteImage = (model) =>
   model.startsWith("gemini-3.1-flash-lite-image");
 
+/**
+ * 将 Gemini 强度值映射为设置页选项。
+ * @param {string[]} efforts Gemini 支持的思考强度。
+ * @returns {Array<{value: string, label: string}>} Gemini 强度选项。
+ */
 const toGeminiEffortOptions = (efforts) =>
   efforts.map((effort) => GEMINI_EFFORT_OPTIONS[effort]);
 
 /**
  * Gemini 不同模型支持的 thinkingLevel 并不一致。UI 与请求构造共用这份能力表，
  * 避免界面允许选择一个最终会被官方接口拒绝的等级。
+ * @param {Object} options Gemini 强度查询参数。
+ * @param {string} options.apiType Gemini 原生或 OpenAI 兼容接口类型。
+ * @param {string} [options.model] Gemini 模型名称。
+ * @returns {Array<{value: string, label: string}>|null} 已知模型的强度选项；未知模型返回 null。
  */
 export const getGeminiThinkingEfforts = ({ apiType, model = "" }) => {
+  const normalizedModel = normalizeGeminiModelName(model);
+  const isKnownModel =
+    isGemini25(normalizedModel) ||
+    isGemini31FlashLiteImage(normalizedModel) ||
+    isGemini31Pro(normalizedModel) ||
+    isGemini3Pro(normalizedModel) ||
+    (normalizedModel.startsWith("gemini-3") &&
+      normalizedModel.includes("flash"));
+  if (!isKnownModel) return null;
+
   if (apiType === OPT_TRANS_GEMINI_2) {
     return toGeminiEffortOptions(["high", "medium", "low", "minimal"]);
   }
 
-  const normalizedModel = normalizeGeminiModelName(model);
   if (isGemini25(normalizedModel)) {
     return toGeminiEffortOptions(["high", "medium", "low"]);
   }
@@ -614,104 +873,7 @@ export const getGeminiThinkingEfforts = ({ apiType, model = "" }) => {
   ) {
     return toGeminiEffortOptions(["high", "medium", "low", "minimal"]);
   }
-  return toGeminiEffortOptions(["high", "medium", "low"]);
-};
-
-const normalizeGeminiThinkingEffort = (effort, supportedEfforts) => {
-  const supported = supportedEfforts.map((item) => item.value);
-  if (supported.includes(effort)) return effort;
-  if (!effort || effort === "_default") return supported[0];
-
-  const targetRank = GEMINI_EFFORT_RANK[effort];
-  if (targetRank === undefined) return supported[0];
-  return supported.reduce((closest, candidate) => {
-    const distance = Math.abs(GEMINI_EFFORT_RANK[candidate] - targetRank);
-    const closestDistance = Math.abs(GEMINI_EFFORT_RANK[closest] - targetRank);
-    return distance < closestDistance ? candidate : closest;
-  });
-};
-
-/**
- * 将三态思考设置转换为当前协议和模型真正支持的参数。
- * auto 完全不注入参数；enabled 优先显式开启，否则取最高等级；disabled 无法关闭时取最低等级。
- */
-export const getGeminiThinkingStrategy = ({
-  apiType,
-  url = "",
-  model = "",
-  thinkingMode = "disabled",
-  thinkingEffort = "_default",
-}) => {
-  if (thinkingMode === "auto") {
-    return { field: null, value: null, fallback: false };
-  }
-
-  const normalizedModel = normalizeGeminiModelName(model);
-  const supportedEfforts = getGeminiThinkingEfforts({ apiType, model });
-  const lowestEffort = supportedEfforts[supportedEfforts.length - 1].value;
-  const requestedEffort = normalizeGeminiThinkingEffort(
-    thinkingEffort,
-    supportedEfforts
-  );
-
-  if (apiType === OPT_TRANS_GEMINI_2) {
-    if (thinkingMode === "disabled" && isGemini25NonPro(normalizedModel)) {
-      return { field: "reasoning_effort", value: "none", fallback: false };
-    }
-    return {
-      field: "reasoning_effort",
-      value: thinkingMode === "enabled" ? requestedEffort : lowestEffort,
-      fallback: thinkingMode === "disabled",
-    };
-  }
-
-  if (isGeminiInteractionsUrl(url)) {
-    // Interactions 对 2.5 Flash-Lite 不提供关闭参数；省略等级即可保留模型默认的不思考状态。
-    if (thinkingMode === "disabled" && isGemini25FlashLite(normalizedModel)) {
-      return { field: null, value: null, fallback: false };
-    }
-    return {
-      field: "thinking_level",
-      value: thinkingMode === "enabled" ? requestedEffort : lowestEffort,
-      fallback: thinkingMode === "disabled",
-    };
-  }
-
-  // generateContent 的 Gemini 2.5 使用 token 预算，Gemini 3 才使用 thinkingLevel。
-  if (isGemini25(normalizedModel)) {
-    if (thinkingMode === "enabled") {
-      return {
-        field: "thinkingBudget",
-        value:
-          thinkingEffort === "_default"
-            ? -1
-            : GEMINI25_BUDGETS[requestedEffort],
-        fallback: false,
-      };
-    }
-    return isGemini25Pro(normalizedModel)
-      ? { field: "thinkingBudget", value: 128, fallback: true }
-      : { field: "thinkingBudget", value: 0, fallback: false };
-  }
-
-  return {
-    field: "thinkingLevel",
-    value: thinkingMode === "enabled" ? requestedEffort : lowestEffort,
-    fallback: thinkingMode === "disabled",
-  };
-};
-
-export const getGeminiThinkingDisableStrategy = ({
-  apiType,
-  url = "",
-  model = "",
-}) => {
-  return getGeminiThinkingStrategy({
-    apiType,
-    url,
-    model,
-    thinkingMode: "disabled",
-  });
+  return null;
 };
 
 export const BUILTIN_STONES = [
@@ -806,6 +968,20 @@ export const OPT_LANGS_TO_SPEC = {
   ]),
   [OPT_TRANS_GOOGLE]: OPT_LANGS_SPEC_DEFAULT,
   [OPT_TRANS_GOOGLE_2]: OPT_LANGS_SPEC_DEFAULT,
+  [OPT_TRANS_GOOGLE_CLOUD]: OPT_LANGS_SPEC_DEFAULT,
+  [OPT_TRANS_YANDEX]: new Map([
+    ...OPT_LANGS_SPEC_DEFAULT,
+    ["zh-CN", "zh"],
+    ["zh-TW", "zh"],
+    ["nb", "no"],
+  ]),
+  [OPT_TRANS_YANDEXFREE]: new Map([
+    ...OPT_LANGS_SPEC_DEFAULT,
+    ["auto", ""],
+    ["zh-CN", "zh"],
+    ["zh-TW", "zh"],
+    ["nb", "no"],
+  ]),
   [OPT_TRANS_MICROSOFT]: new Map([
     ...OPT_LANGS_SPEC_DEFAULT,
     ["auto", ""],
@@ -841,6 +1017,7 @@ export const OPT_LANGS_TO_SPEC = {
   [OPT_TRANS_SILICONFLOW]: OPT_LANGS_SPEC_NAME,
   [OPT_TRANS_XIAOMIMIMO]: OPT_LANGS_SPEC_NAME,
   [OPT_TRANS_ALIYUNBAILIAN]: OPT_LANGS_SPEC_NAME,
+  [OPT_TRANS_QWENMT]: new Map([...OPT_LANGS_SPEC_NAME, ["auto", "auto"]]),
   [OPT_TRANS_CEREBRAS]: OPT_LANGS_SPEC_NAME,
   [OPT_TRANS_ZAI]: OPT_LANGS_SPEC_NAME,
   [OPT_TRANS_VOLCENGINE]: new Map([
@@ -1071,72 +1248,191 @@ Fail-safe: On error, return "{id} | {original_text}" line by line.`;
 // `;
 
 // 专家级AI词典系统提示词
-export const defaultDictPrompt = `# Role
-你是一位精通对比语言学、现代语料库语言学的专家级词典编纂者。请为用户输入的文本提供兼具学术严谨性与视觉优雅感的全方位解析或高质量翻译。
+export const defaultDictPrompt = createEnglishDictionaryPrompt({
+  targetLanguage: "Chinese",
+  translationExample: "用于 Web 和原生用户界面的库",
+  labels: {
+    entry: "词条",
+    essentials: "基础形态与音标",
+    pronunciation: "发音标注",
+    meanings: "词性与核心义项",
+    context: "语境精析",
+    contextMeaning: "当前语义锁定",
+    register: "语境色调",
+    replacements: "原句平替词",
+    deepDive: "词源深度解构与辨析",
+    etymology: "词源与记忆锚点",
+    collocations: "高频搭配",
+    synonyms: "同义词微观辨析",
+    examples: "语料库双解例句",
+    translation: "中文翻译",
+    scene: "场景标签",
+  },
+});
+
+function createEnglishDictionaryPrompt({
+  targetLanguage,
+  translationExample,
+  labels,
+}) {
+  return `# Role
+You are an expert English-${targetLanguage} lexicographer specializing in contrastive linguistics and modern corpus linguistics. Analyze the user's English text with academic rigor and clear, elegant formatting, or translate it naturally into ${targetLanguage} when dictionary analysis is not appropriate.
 
 # Execution Rules
-1. **智能分流机制（CRITICAL）**：请严格基于下方 \`[Target / 目标文本]\` 的长度和性质决定工作模式：
-   - **词典模式**：仅当 \`[Target / 目标文本]\` 明确是**单个词、成语，或不超过 3 个词的固定搭配**时，才严格执行下方的【词典输出格式】。
-   - **纯翻译模式**：完整句子、分句、自然语言短语、段落、长文本，或**超过 3 个词的连续文本**，一律进入纯翻译模式。无法确定时，优先进入纯翻译模式。
-2. **语境优先原则**：在【词典模式】下，若 \`[Context / 上下文]\` 中存在有效信息，请优先锁定该词在特定语境下的义项，并将其置于释义首位。
-3. **格式死线**：无论进入哪种模式，严格按对应格式输出，禁止输出任何前导寒暄（如“好的”、“为您解析”）或尾部总结。
+1. **Smart routing (CRITICAL)**: Choose the mode strictly from the length and nature of \`[Target]\`:
+   - **Dictionary mode**: Use the dictionary output format only when \`[Target]\` is clearly a single English word, an idiom, or a fixed collocation of no more than 3 words.
+   - **Pure translation mode**: Use pure translation for complete sentences, clauses, natural-language phrases, paragraphs, long text, or any continuous text longer than 3 words. When uncertain, choose pure translation mode.
+2. **Context first**: In dictionary mode, if \`[Context]\` contains useful information, put the contextually correct sense first.
+3. **Target-language contract**: All headings, labels, definitions, explanations, usage notes, and example translations in dictionary mode must be written in ${targetLanguage}. Keep English only for the entry, English examples, pronunciation, and English words being compared.
+4. **No extra framing**: Follow the selected format exactly. Do not add greetings, prefaces, or closing summaries.
 
 ---
 
-# Pure Translation Output Contract (仅限【纯翻译模式】执行)
+# Pure Translation Output Contract (only for pure translation mode)
 
-你的整条回复必须且只能是目标语言译文文本本身。不得添加任何字符、格式或说明：
-- 不输出原文、双语对照、标题、标签、语言名称、引号或 Markdown。
-- 不输出“译文：”“翻译如下：”等前缀，也不输出解释、音标、词源、搭配、例句或致谢。
-- 原文是单段时，译文也只输出单段；仅在原文有多个段落时保留相应分段。
+Your entire response must contain only the ${targetLanguage} translation itself:
+- Do not output the source text, bilingual comparison, headings, labels, language names, quotation marks, Markdown, or explanations.
+- Do not add prefixes such as "Translation:" or include pronunciation, etymology, collocations, examples, or acknowledgements.
+- If the source has one paragraph, output one paragraph. Preserve paragraph breaks only when the source has multiple paragraphs.
 
-示例：
-- 输入：The library for web and native user interfaces
-- 正确输出：用于 Web 和原生用户界面的库
+Example:
+- Input: The library for web and native user interfaces
+- Correct output: ${translationExample}
 
-# Output Format (仅限【词典模式】执行)
+# Output Format (only for dictionary mode)
 
-## 词条：[原词/短语]
-> [如果该词在 \`[Context]\` 中发生了时态/复数/屈折变形，在此处括号内注明其原型，例如：(原型: Go)]
+## ${labels.entry}: [original word or phrase]
+> [If the form is inflected in \`[Context]\`, provide its lemma in parentheses.]
 
-### 1. 基础形态与音标 (Essentials)
-- **发音标注**：🇺🇸 [美式音标] ｜ uk [英式音标] （*若非英语词汇，请自动切换为目标语言的标准注音/假名/拼音*）
-- **词性与核心义项**：
-  - \`[词性缩写. (如 v. / adj.)]\` ① [核心中文释义1] ② [核心中文释义2]
-  - \`[词性缩写.]\` ① [核心中文释义1]
+### 1. ${labels.essentials}
+- **${labels.pronunciation}**: 🇺🇸 [US IPA] ｜ 🇬🇧 [UK IPA]
+- **${labels.meanings}**:
+  - \`[part of speech]\` ① [primary ${targetLanguage} definition] ② [secondary ${targetLanguage} definition]
+  - \`[part of speech]\` ① [primary ${targetLanguage} definition]
 
-### 2. 语境精析 (Contextual Mapping) *[仅在具有有效 Context 时生成本板块]*
-- **当前语义锁定**：该词在给定语境中表现为 \`[词性]\`，精确含义为“[中文释义]”。
-- **语境色调**：[明示该词在此处的修辞色彩，如：感情色彩（褒/贬/中性）｜ 语体（正式书面/职场专业/俚语口语）]
-- **原句平替词**：[提供 1-2 个在当前语境中可无缝替换、不改变原意的近义词]
+### 2. ${labels.context} *[include only when useful Context exists]*
+- **${labels.contextMeaning}**: State the part of speech and precise meaning in the given context.
+- **${labels.register}**: Describe sentiment, register, formality, and tone.
+- **${labels.replacements}**: Give 1-2 English synonyms that can replace the entry in this context without changing the meaning.
 
-### 3. 词源深度解构与辨析 (Deep Dive)
-- **词源与记忆锚点**：[拆解词根词缀、历史演变，或提供一个逻辑清晰的联想记忆法]
-- **高频搭配 (Collocations)**：
-  * \`[搭配 1]\` ➔ [中文精准翻译]
-  * \`[搭配 2]\` ➔ [中文精准翻译]
-- **同义词微观辨析 (Synonyms)**：
-  * **[原词] vs [近义词1] vs [近义词2]**：[用 1-2 句话点透它们在“使用语境”、“语气轻重”或“搭配习惯”上的微妙区别]
+### 3. ${labels.deepDive}
+- **${labels.etymology}**: Explain roots, affixes, historical development, or provide a logical memory aid.
+- **${labels.collocations}**:
+  * \`[collocation 1]\` ➔ [precise ${targetLanguage} translation]
+  * \`[collocation 2]\` ➔ [precise ${targetLanguage} translation]
+- **${labels.synonyms}**:
+  * **[entry] vs [synonym 1] vs [synonym 2]**: Explain their differences in context, intensity, register, or collocation habits in 1-2 sentences.
 
-### 4. 语料库双解例句 (Corpus Examples)
-[请提供 2-3 个来自真实出版物、新闻或地道日常场景的优质双语例句]
+### 4. ${labels.examples}
+[Provide 2-3 natural examples from publications, news, professional writing, or everyday English.]
 
-1. **[地道英文/源语言例句]**
-   - 💡 *中文翻译*：[精准的、符合中文习惯的翻译]
-   - 📌 *场景标签*：\`[学术写作 / 商务邮件 / 日常街头 / 科技新闻]\``;
+1. **[natural English example]**
+   - 💡 *${labels.translation}*: [accurate, idiomatic ${targetLanguage} translation]
+   - 📌 *${labels.scene}*: \`[localized scene label]\``;
+}
+
+export const defaultDictPromptEnJa = createEnglishDictionaryPrompt({
+  targetLanguage: "Japanese",
+  translationExample:
+    "Webおよびネイティブのユーザーインターフェース向けライブラリ",
+  labels: {
+    entry: "見出し語",
+    essentials: "基本情報と発音",
+    pronunciation: "発音",
+    meanings: "品詞と主要な意味",
+    context: "文脈分析",
+    contextMeaning: "文脈上の意味",
+    register: "語調と使用域",
+    replacements: "文脈に合う言い換え",
+    deepDive: "語源・用法・類義語",
+    etymology: "語源と記憶の手がかり",
+    collocations: "頻出コロケーション",
+    synonyms: "類義語の使い分け",
+    examples: "コーパス用例",
+    translation: "日本語訳",
+    scene: "使用場面",
+  },
+});
+
+export const defaultDictPromptEnKo = createEnglishDictionaryPrompt({
+  targetLanguage: "Korean",
+  translationExample: "웹 및 네이티브 사용자 인터페이스용 라이브러리",
+  labels: {
+    entry: "표제어",
+    essentials: "기본 정보와 발음",
+    pronunciation: "발음",
+    meanings: "품사와 핵심 의미",
+    context: "문맥 분석",
+    contextMeaning: "문맥상 의미",
+    register: "어조와 사용역",
+    replacements: "문맥에 맞는 대체어",
+    deepDive: "어원·용법·유의어",
+    etymology: "어원과 기억 단서",
+    collocations: "주요 연어",
+    synonyms: "유의어 뉘앙스 비교",
+    examples: "말뭉치 예문",
+    translation: "한국어 번역",
+    scene: "사용 상황",
+  },
+});
+
+export const defaultDictPromptEnVi = createEnglishDictionaryPrompt({
+  targetLanguage: "Vietnamese",
+  translationExample: "Thư viện dành cho giao diện người dùng web và native",
+  labels: {
+    entry: "Mục từ",
+    essentials: "Thông tin cơ bản và phát âm",
+    pronunciation: "Phát âm",
+    meanings: "Từ loại và nghĩa cốt lõi",
+    context: "Phân tích ngữ cảnh",
+    contextMeaning: "Nghĩa trong ngữ cảnh",
+    register: "Sắc thái và phong cách",
+    replacements: "Từ thay thế phù hợp",
+    deepDive: "Từ nguyên, cách dùng và từ đồng nghĩa",
+    etymology: "Từ nguyên và mẹo ghi nhớ",
+    collocations: "Cụm từ thường gặp",
+    synonyms: "Phân biệt từ đồng nghĩa",
+    examples: "Ví dụ ngữ liệu",
+    translation: "Bản dịch tiếng Việt",
+    scene: "Ngữ cảnh sử dụng",
+  },
+});
+
+export const defaultDictPromptEnRu = createEnglishDictionaryPrompt({
+  targetLanguage: "Russian",
+  translationExample:
+    "Библиотека для веб-интерфейсов и нативных пользовательских интерфейсов",
+  labels: {
+    entry: "Словарная статья",
+    essentials: "Основная информация и произношение",
+    pronunciation: "Произношение",
+    meanings: "Часть речи и основные значения",
+    context: "Контекстный анализ",
+    contextMeaning: "Значение в контексте",
+    register: "Тональность и регистр",
+    replacements: "Контекстные замены",
+    deepDive: "Этимология, употребление и синонимы",
+    etymology: "Этимология и подсказка для запоминания",
+    collocations: "Частотные сочетания",
+    synonyms: "Различия между синонимами",
+    examples: "Корпусные примеры",
+    translation: "Перевод на русский",
+    scene: "Сфера употребления",
+  },
+});
 
 // 专家级AI词典用户提示词
 export const defaultDictUserPrompt = `# Input Data
 
-## [Context / 上下文] (Optional)
-> 以下信息用于辅助精准锁定目标文本的语境：
-- 文档标题：${INPUT_PLACE_TITLE}
-- 文档描述：${INPUT_PLACE_DESCRIPTION}
-- 文档摘要：${INPUT_PLACE_SUMMARY}
-- 所在段落：${INPUT_PLACE_CONTEXT}
+## [Context] (Optional)
+> Use this information to identify the target text's meaning in context:
+- Document title: ${INPUT_PLACE_TITLE}
+- Document description: ${INPUT_PLACE_DESCRIPTION}
+- Document summary: ${INPUT_PLACE_SUMMARY}
+- Surrounding paragraph: ${INPUT_PLACE_CONTEXT}
 
-## [Target / 目标文本] (Required)
-> 触发【词典模式】或【纯翻译模式】的核心判定对象：
+## [Target] (Required)
+> Use this text to choose between dictionary mode and pure translation mode:
 ${INPUT_PLACE_TEXT}`;
 
 // AI 字幕默认使用 boundary-v3：模型返回句末事件 ID、原文锚点和译文，最终原文与时间轴仍由程序重建。
@@ -1262,6 +1558,20 @@ const defaultApiOpts = {
     placetag: "a",
     placetagFormat: "attribute",
   },
+  [OPT_TRANS_GOOGLE_CLOUD]: {
+    ...defaultApi,
+    url: "https://translation.googleapis.com/language/translate/v2",
+    useBatchFetch: true,
+  },
+  [OPT_TRANS_YANDEX]: {
+    ...defaultApi,
+    url: "https://translate.api.cloud.yandex.net/translate/v2/translate",
+    folderId: "",
+    useBatchFetch: true,
+  },
+  [OPT_TRANS_YANDEXFREE]: {
+    ...defaultApi,
+  },
   [OPT_TRANS_MICROSOFT]: {
     ...defaultApi,
     useBatchFetch: true,
@@ -1323,6 +1633,11 @@ const defaultApiOpts = {
     modelListUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
     model: "qwen-plus",
     ...defaultAiApiOpts,
+  },
+  [OPT_TRANS_QWENMT]: {
+    ...defaultApi,
+    url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    model: "qwen-mt-flash",
   },
   [OPT_TRANS_CEREBRAS]: {
     ...defaultApi,
@@ -1409,12 +1724,14 @@ const defaultApiOpts = {
 };
 
 // 内置翻译接口列表（带参数）
-export const DEFAULT_API_LIST = OPT_ALL_TRANS_TYPES.map((apiType) => ({
-  ...defaultApiOpts[apiType],
-  apiSlug: apiType,
-  apiName: apiType,
-  apiType,
-}));
+export const DEFAULT_API_LIST = OPT_ALL_TRANS_TYPES.map((apiType) =>
+  normalizeApiThinkingSetting({
+    ...defaultApiOpts[apiType],
+    apiSlug: apiType,
+    apiName: apiType,
+    apiType,
+  })
+);
 
 /**
  * 为单个翻译接口补齐模型列表 URL。
@@ -1473,7 +1790,7 @@ export function normalizeApiModelListUrls(transApis = []) {
   return hasChanges ? nextApis : transApis;
 }
 
-export const DEFAULT_API_TYPE = OPT_TRANS_TENCENT;
+export const DEFAULT_API_TYPE = OPT_TRANS_MICROSOFT;
 export const DEFAULT_API_SETTING = DEFAULT_API_LIST.find(
   (a) => a.apiType === DEFAULT_API_TYPE
 );
