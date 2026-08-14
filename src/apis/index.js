@@ -13,6 +13,7 @@ import {
   MSG_BUILTINAI_DETECT,
   MSG_BUILTINAI_TRANSLATE,
   OPT_TRANS_BUILTINAI,
+  OPT_TRANS_QWENMT,
   URL_CACHE_SUBTITLE,
   URL_CACHE_CONTEXT,
   OPT_LANGS_TO_CODE,
@@ -20,6 +21,10 @@ import {
   defaultDictUserPrompt,
 } from "../config";
 import { sha256, withTimeout } from "../libs/utils";
+import {
+  isSameTranslationLanguage,
+  normalizeLanguageCode,
+} from "../libs/language";
 import { getCacheDigest } from "../libs/cacheDigest";
 import {
   handleTranslate,
@@ -44,8 +49,44 @@ const PROMPT_CACHE_SCOPE_BATCH = "batch";
 const PROMPT_CACHE_SCOPE_NOBATCH = "nobatch";
 const PROMPT_CACHE_SCOPE_DICT = "dict";
 const PROMPT_CACHE_SCOPE_PLAIN = "plain";
+const PROMPT_CACHE_SCOPE_QWEN_MT = "qwen-mt";
+
+const isGenericChineseLanguageCode = (code) =>
+  typeof code === "string" && /^zh$/i.test(code.trim());
+
+const getTranslationLanguageMatch = ({
+  fromLang,
+  toLang,
+  to,
+  srLang,
+  srCode,
+  translateVariants,
+}) => {
+  if (fromLang !== "auto") return false;
+
+  const isGenericChinese = isGenericChineseLanguageCode(srLang);
+  const normalizedSource =
+    isGenericChinese && translateVariants
+      ? ""
+      : normalizeLanguageCode(srCode || srLang);
+  const normalizedTarget = normalizeLanguageCode(toLang);
+
+  return (
+    isSameTranslationLanguage(
+      normalizedSource,
+      normalizedTarget,
+      translateVariants
+    ) ||
+    (!isGenericChinese &&
+      (!normalizedSource || !normalizedTarget) &&
+      srLang === to)
+  );
+};
 
 function getTranslatePromptCacheScope(apiSetting = {}) {
+  if (apiSetting.apiType === OPT_TRANS_QWENMT) {
+    return PROMPT_CACHE_SCOPE_QWEN_MT;
+  }
   if (!API_SPE_TYPES.ai.has(apiSetting.apiType)) {
     return PROMPT_CACHE_SCOPE_PLAIN;
   }
@@ -55,32 +96,39 @@ function getTranslatePromptCacheScope(apiSetting = {}) {
     : PROMPT_CACHE_SCOPE_NOBATCH;
 }
 
-function getPromptCacheFields(apiSetting = {}, promptScope) {
-  if (promptScope === PROMPT_CACHE_SCOPE_BATCH) {
-    return [apiSetting.systemPrompt || ""];
-  }
+function getPromptCacheFields(apiSetting = {}, promptScope, glossary = {}) {
+  let fields = [];
 
-  if (promptScope === PROMPT_CACHE_SCOPE_NOBATCH) {
-    return [
+  if (promptScope === PROMPT_CACHE_SCOPE_BATCH) {
+    fields = [apiSetting.systemPrompt || ""];
+  } else if (promptScope === PROMPT_CACHE_SCOPE_NOBATCH) {
+    fields = [
       apiSetting.nobatchPrompt || "",
       apiSetting.nobatchUserPrompt ?? defaultNobatchUserPrompt,
     ];
-  }
-
-  if (promptScope === PROMPT_CACHE_SCOPE_DICT) {
+  } else if (promptScope === PROMPT_CACHE_SCOPE_DICT) {
     return [
       apiSetting.dictPrompt || "",
       apiSetting.dictUserPrompt ?? defaultDictUserPrompt,
     ];
+  } else if (promptScope === PROMPT_CACHE_SCOPE_QWEN_MT) {
+    fields = [];
+  } else {
+    return [];
   }
 
-  return [];
+  fields.push(apiSetting.tone || "", apiSetting.aiTerms || "");
+  const glossaryEntries = Object.entries(glossary || {}).sort();
+  if (glossaryEntries.length) {
+    fields.push(JSON.stringify(glossaryEntries));
+  }
+  return fields;
 }
 
-async function getPromptCacheSig(apiSetting = {}, promptScope) {
+async function getPromptCacheSig(apiSetting = {}, promptScope, glossary) {
   const promptText = [
     promptScope,
-    ...getPromptCacheFields(apiSetting, promptScope),
+    ...getPromptCacheFields(apiSetting, promptScope, glossary),
   ].join("\n");
 
   return (await getCacheDigest(promptText, PROMPT_CACHE_SALT)).slice(0, 16);
@@ -571,6 +619,8 @@ const apiBuiltinAITranslate = async ({ text, from, to, apiSetting }) => {
  * @param {Object} params.docInfo 视频/文档摘要等额外上下文环境数据
  * @param {boolean} params.useCache 是否应用本地请求缓存 (默认 true)
  * @param {boolean} params.usePool 是否应用限制连接池 (默认 true)
+ * @param {boolean} params.translateVariants 是否翻译同一语言的不同变体
+ * @param {"text"|"html"} params.textFormat 输入与输出的内容格式，默认为纯文本
  * @param {AbortSignal} params.signal AbortController 传导的取消控制信号
  * @returns {Promise<Object>} 最终解析出的翻译响应数据 (trText, srLang, srCode, isSame)
  */
@@ -584,6 +634,8 @@ export const apiTranslate = async ({
   docInfo,
   useCache = true,
   usePool = true,
+  translateVariants = true,
+  textFormat = "text",
   signal,
 }) => {
   if (!text) {
@@ -609,13 +661,16 @@ export const apiTranslate = async ({
   const [v1, v2] = process.env.REACT_APP_VERSION.split(".");
   const promptSig = await getPromptCacheSig(
     apiSetting,
-    getTranslatePromptCacheScope(apiSetting)
+    getTranslatePromptCacheScope(apiSetting),
+    glossary
   );
   const cacheOpts = {
     apiSlug,
     text,
     fromLang,
     toLang,
+    textFormat,
+    translateVariants,
     version: [v1, v2].join("."),
     promptSig,
     ...(docInfo?.summary && { ctx: docInfo.summary.slice(0, 50) }),
@@ -626,7 +681,17 @@ export const apiTranslate = async ({
   if (useCache) {
     const cache = await getHttpCachePolyfill(cacheInput);
     if (cache?.trText) {
-      return cache;
+      return {
+        ...cache,
+        isSame: getTranslationLanguageMatch({
+          fromLang,
+          toLang,
+          to,
+          srLang: cache.srLang,
+          srCode: cache.srCode,
+          translateVariants,
+        }),
+      };
     }
   }
   if (signal?.aborted) {
@@ -664,7 +729,7 @@ export const apiTranslate = async ({
             configuredBatchConcurrency >= 1
           ? Math.floor(configuredBatchConcurrency)
           : 1;
-    const key = `${apiSlug}_${fromLang}_${toLang}_${enableStream ? "stream" : "batch"}_${promptSig}_${effectiveBatchConcurrency}`;
+    const key = `${apiSlug}_${fromLang}_${toLang}_${textFormat}_${enableStream ? "stream" : "batch"}_${promptSig}_${effectiveBatchConcurrency}`;
     const queue = getBatchQueue(key, handleTranslate, {
       batchInterval,
       batchSize,
@@ -679,6 +744,7 @@ export const apiTranslate = async ({
       toLang,
       langMap,
       glossary,
+      textFormat,
       apiSetting,
       usePool,
       onStreamChunk,
@@ -694,6 +760,7 @@ export const apiTranslate = async ({
       toLang,
       langMap,
       glossary,
+      textFormat,
       apiSetting,
       usePool,
       docInfo,
@@ -747,7 +814,14 @@ export const apiTranslate = async ({
   }
 
   // 判断是否发生了“源语言与目标语言相同”的无效翻译情况 (如英文网页翻译为英文)
-  const isSame = fromLang === "auto" && srLang === to;
+  const isSame = getTranslationLanguageMatch({
+    fromLang,
+    toLang,
+    to,
+    srLang,
+    srCode,
+    translateVariants,
+  });
 
   // 4. 将成功的结果写入本地网络缓存中
   if (useCache) {

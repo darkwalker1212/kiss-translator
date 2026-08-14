@@ -32,6 +32,7 @@ import Zdic from "./Zdic";
 import { isValidWord, isSingleChineseChar } from "../../libs/utils";
 import { kissLog } from "../../libs/log";
 import { tryDetectLang } from "../../libs/detect";
+import { isSameTranslationLanguage } from "../../libs/language";
 
 /**
  * 翻译交互核心表单组件 (集成源/目标语言选择、多引擎翻译、词典展示、汉典展示、语言检测与文本输入)
@@ -47,6 +48,7 @@ export default function TranForm({
   transApis,
   simpleStyle = false,
   langDetector: initLangDetector = "-",
+  translateVariants = true,
   enDict: initEnDict = "-",
   enSug: initEnSug = "-",
   aiDictApiSlug = "-",
@@ -54,6 +56,8 @@ export default function TranForm({
   prompts = [],
   selectionContext = "",
   isPlaygound = false,
+  autoFocusInput = true,
+  syncExternalTextWhileEditing = false,
 }) {
   const i18n = useI18n();
 
@@ -76,8 +80,11 @@ export default function TranForm({
   const [deLoading, setDeLoading] = useState(false);
   const inputRef = useRef(null);
 
-  // 挂载时：输入框自动获取焦点，并将光标定位在文本尾部
+  // 允许自动聚焦时，将输入框聚焦并把光标定位在文本尾部。
+  // autoFocusInput 可在异步初始化完成后由 false 切换为 true。
   useEffect(() => {
+    if (!autoFocusInput) return;
+
     const input = inputRef.current;
     if (!input) return;
 
@@ -85,7 +92,7 @@ export default function TranForm({
 
     const len = input.value.length;
     input.setSelectionRange(len, len);
-  }, []);
+  }, [autoFocusInput]);
 
   // 监听划词/输入文本，如果是合法的英文单词，则分发自定义事件，便于其他监听器(如生词本系统)感知新单词
   useEffect(() => {
@@ -104,12 +111,12 @@ export default function TranForm({
     }
   }, [initApiSlugs, hasUserChangedApiSlugs]);
 
-  // 如果没有处于编辑态，输入框显示内容需要实时同步外部 text
+  // 默认仅在非编辑态同步外部文本；主动文本翻译面板可选择让剪贴板更新覆盖临时编辑值。
   useEffect(() => {
-    if (!editMode) {
+    if (syncExternalTextWhileEditing || !editMode) {
       setEditText(text);
     }
-  }, [text, editMode]);
+  }, [text, editMode, syncExternalTextWhileEditing]);
 
   // 文本改变或配置切换时，发起异步语种检测
   useEffect(() => {
@@ -149,13 +156,13 @@ export default function TranForm({
       fromLang === "auto" &&
       toLang !== toLang2 &&
       toLang2 !== "-" &&
-      deLang === toLang
+      isSameTranslationLanguage(deLang, toLang, translateVariants)
     ) {
       return toLang2;
     }
 
     return toLang;
-  }, [fromLang, toLang, toLang2, deLang]);
+  }, [fromLang, toLang, toLang2, deLang, translateVariants]);
 
   // 过滤出未被禁用的翻译服务商
   const optApis = useMemo(
@@ -504,6 +511,7 @@ export default function TranForm({
           simpleStyle={simpleStyle}
           apiSlug={slug}
           transApis={transApis}
+          translateVariants={translateVariants}
         />
       ))}
 

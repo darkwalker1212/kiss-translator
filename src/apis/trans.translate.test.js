@@ -24,11 +24,17 @@ import {
   DEFAULT_API_LIST,
   GEMINI_GENERATE_CONTENT_URL,
   GEMINI_INTERACTIONS_URL,
+  OPT_TRANS_DEEPSEEK,
   OPT_TRANS_GEMINI,
   OPT_TRANS_GEMINI_2,
+  OPT_TRANS_GOOGLE_2,
+  OPT_TRANS_GOOGLE_CLOUD,
   OPT_TRANS_MICROSOFT,
   OPT_TRANS_OPENAI,
   OPT_TRANS_OPENROUTER,
+  OPT_TRANS_QWENMT,
+  OPT_TRANS_YANDEX,
+  OPT_TRANS_YANDEXFREE,
 } from "../config";
 import { fetchData, fetchStream } from "../libs/fetch";
 import { trustedTypesHelper } from "../libs/trustedTypes";
@@ -70,6 +76,221 @@ describe("handleTranslate", () => {
     jest.restoreAllMocks();
   });
 
+  test("uses Google Cloud plain-text mode and decodes text entities", async () => {
+    fetchData.mockResolvedValueOnce({
+      data: {
+        translations: [
+          {
+            translatedText: "First isn&#39;t &amp; simple\nSecond",
+            detectedSourceLanguage: "en",
+          },
+        ],
+      },
+    });
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["First & simple\nSecond"], {
+        from: "auto",
+        to: "zh-CN",
+        fromLang: "auto",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_GOOGLE_CLOUD),
+          useStream: false,
+        },
+        textFormat: "text",
+        usePool: false,
+      })
+    );
+
+    const body = JSON.parse(fetchData.mock.calls[0][1].body);
+    expect(body).toEqual({
+      q: ["First & simple\nSecond"],
+      target: "zh-CN",
+      format: "text",
+    });
+    expect(result).toEqual([
+      { id: 0, result: ["First isn't & simple\nSecond", "en"] },
+    ]);
+  });
+
+  test("preserves Google Cloud HTML requests and responses", async () => {
+    fetchData.mockResolvedValueOnce({
+      data: {
+        translations: [
+          { translatedText: "A &amp; B<br>", detectedSourceLanguage: "en" },
+        ],
+      },
+    });
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["A &amp; B<br>"], {
+        from: "en",
+        to: "zh-CN",
+        fromLang: "en",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_GOOGLE_CLOUD),
+          useStream: false,
+        },
+        textFormat: "html",
+        usePool: false,
+      })
+    );
+
+    const body = JSON.parse(fetchData.mock.calls[0][1].body);
+    expect(body).toEqual({
+      q: ["A &amp; B<br>"],
+      target: "zh-CN",
+      format: "html",
+      source: "en",
+    });
+    expect(result).toEqual([{ id: 0, result: ["A &amp; B<br>", "en"] }]);
+  });
+
+  test("sends batched Yandex Cloud requests with automatic source detection", async () => {
+    fetchData.mockResolvedValueOnce({
+      translations: [
+        { text: "你好", detectedLanguageCode: "en" },
+        { text: "世界", detectedLanguageCode: "en" },
+      ],
+    });
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["Hello", "World"], {
+        from: "auto",
+        to: "zh",
+        fromLang: "auto",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_YANDEX),
+          folderId: "folder-id",
+          useStream: false,
+        },
+        usePool: false,
+      })
+    );
+
+    expect(fetchData.mock.calls[0][0]).toBe(
+      "https://translate.api.cloud.yandex.net/translate/v2/translate"
+    );
+    expect(fetchData.mock.calls[0][1].headers).toMatchObject({
+      "Content-type": "application/json",
+      Authorization: "Api-Key test-key",
+    });
+    expect(JSON.parse(fetchData.mock.calls[0][1].body)).toEqual({
+      folderId: "folder-id",
+      texts: ["Hello", "World"],
+      targetLanguageCode: "zh",
+    });
+    expect(result).toEqual([
+      { id: 0, result: ["你好", "en"] },
+      { id: 1, result: ["世界", "en"] },
+    ]);
+  });
+
+  test("includes an explicit source language in Yandex Cloud requests", async () => {
+    fetchData.mockResolvedValueOnce({
+      translations: [{ text: "你好", detectedLanguageCode: "en" }],
+    });
+
+    await collectAsyncGenerator(
+      handleTranslate(["Hello"], {
+        from: "en",
+        to: "zh",
+        fromLang: "en",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_YANDEX),
+          folderId: "folder-id",
+          useStream: false,
+        },
+        usePool: false,
+      })
+    );
+
+    expect(JSON.parse(fetchData.mock.calls[0][1].body)).toMatchObject({
+      sourceLanguageCode: "en",
+    });
+  });
+
+  test("sends one text through the credential-free Yandex endpoint", async () => {
+    jest.spyOn(Math, "random").mockReturnValue(0);
+    fetchData.mockResolvedValueOnce({
+      code: 200,
+      lang: "en-zh",
+      text: ["你好！"],
+    });
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["hello"], {
+        from: "en",
+        to: "zh",
+        fromLang: "en",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_YANDEXFREE),
+          useBatchFetch: false,
+          useStream: false,
+        },
+        usePool: false,
+      })
+    );
+
+    const requestUrl = new URL(fetchData.mock.calls[0][0]);
+    expect(requestUrl.origin + requestUrl.pathname).toBe(
+      "https://translate.yandex.net/api/v1/tr.json/translate"
+    );
+    expect(Object.fromEntries(requestUrl.searchParams)).toEqual({
+      id: "00000000000000000000000000000000-0-0",
+      srv: "android",
+      source_lang: "en",
+      target_lang: "zh",
+      text: "hello",
+    });
+    expect(fetchData.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    expect(fetchData.mock.calls[0][1]).not.toHaveProperty("body");
+    expect(result).toEqual([{ id: 0, result: ["你好！", "en"] }]);
+  });
+
+  test("keeps Google2 HTML encoding inside the request boundary", async () => {
+    fetchData.mockResolvedValueOnce([["First isn&#39;t<br>Second"], ["en"]]);
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["First isn't\nSecond"], {
+        from: "en",
+        to: "zh-CN",
+        fromLang: "en",
+        toLang: "zh-CN",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_GOOGLE_2),
+          useStream: false,
+        },
+        textFormat: "text",
+        usePool: false,
+      })
+    );
+
+    const body = JSON.parse(fetchData.mock.calls[0][1].body);
+    expect(body).toEqual([
+      [["First isn't<br>Second"], "en", "zh-CN"],
+      "wt_lib",
+    ]);
+    expect(result).toEqual([{ id: 0, result: ["First isn't\nSecond", "en"] }]);
+  });
+
   test("uses the stable Gemini Interactions request and parses model output steps", async () => {
     fetchData.mockResolvedValueOnce({
       status: "completed",
@@ -98,9 +319,11 @@ describe("handleTranslate", () => {
         apiSetting: {
           ...getApiSetting(OPT_TRANS_GEMINI),
           url: GEMINI_INTERACTIONS_URL,
+          model: "gemini-3.6-flash",
           useStream: false,
           temperature: 0.7,
           thinkingMode: "disabled",
+          thinkingEffort: "minimal",
         },
         usePool: false,
       })
@@ -110,12 +333,12 @@ describe("handleTranslate", () => {
     const body = JSON.parse(init.body);
     expect(url).toBe(GEMINI_INTERACTIONS_URL);
     expect(body).toMatchObject({
-      model: "test-model",
+      model: "gemini-3.6-flash",
       stream: false,
       store: false,
       generation_config: {
         max_output_tokens: expect.any(Number),
-        thinking_level: "low",
+        thinking_level: "minimal",
         temperature: 0.7,
       },
     });
@@ -124,6 +347,93 @@ describe("handleTranslate", () => {
     expect(body.generation_config).not.toHaveProperty("top_p");
     expect(body.generation_config).not.toHaveProperty("top_k");
     expect(result).toEqual([{ id: 0, result: ["你好", "en"] }]);
+  });
+
+  test("sends one QwenMT user message with native terms and built-in style", async () => {
+    fetchData.mockResolvedValueOnce({
+      choices: [{ message: { role: "assistant", content: "译文" } }],
+    });
+
+    const result = await collectAsyncGenerator(
+      handleTranslate(["我看到这个视频后没有笑"], {
+        from: "auto",
+        to: "English",
+        fromLang: "auto",
+        toLang: "en",
+        langMap: () => "",
+        glossary: { component: "规则组件", Keep: "" },
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_QWENMT),
+          url: "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+          key: "qwen-key",
+          model: "qwen-mt-flash",
+          useStream: false,
+          useBatchFetch: false,
+          tone: "technical",
+          aiTerms: "React,React\ncomponent,接口组件",
+        },
+        usePool: false,
+      })
+    );
+
+    expect(fetchData).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchData.mock.calls[0];
+    expect(url).toBe(
+      "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+    );
+    expect(init.headers).toMatchObject({
+      "Content-type": "application/json",
+      Authorization: "Bearer qwen-key",
+    });
+    const body = JSON.parse(init.body);
+    expect(body).toEqual({
+      model: "qwen-mt-flash",
+      messages: [{ role: "user", content: "我看到这个视频后没有笑" }],
+      translation_options: {
+        source_lang: "auto",
+        target_lang: "English",
+        terms: expect.arrayContaining([
+          { source: "component", target: "接口组件" },
+          { source: "Keep", target: "Keep" },
+          { source: "React", target: "React" },
+        ]),
+        domains: "Translate in a technical style.",
+      },
+    });
+    expect(body.messages).toHaveLength(1);
+    expect(result).toEqual([{ id: 0, result: ["译文"] }]);
+  });
+
+  test("passes a custom QwenMT style through without prompt wrapping", async () => {
+    fetchData.mockResolvedValueOnce({
+      choices: [{ message: { content: "Legal translation" } }],
+    });
+
+    await collectAsyncGenerator(
+      handleTranslate(["待翻译文本"], {
+        from: "Chinese",
+        to: "English",
+        fromLang: "zh-CN",
+        toLang: "en",
+        langMap: () => "",
+        glossary: {},
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_QWENMT),
+          useStream: false,
+          useBatchFetch: false,
+          tone: "Translate for a legal audience.",
+          aiTerms: "",
+        },
+        usePool: false,
+      })
+    );
+
+    const body = JSON.parse(fetchData.mock.calls[0][1].body);
+    expect(body.translation_options).toEqual({
+      source_lang: "Chinese",
+      target_lang: "English",
+      domains: "Translate for a legal audience.",
+    });
   });
 
   test("applies all three thinking modes to Gemini Interactions", async () => {
@@ -165,9 +475,9 @@ describe("handleTranslate", () => {
     expect(
       JSON.parse(fetchData.mock.calls[1][1].body).generation_config
         .thinking_level
-    ).toBe("high");
+    ).toBe("medium");
 
-    await translate("disabled");
+    await translate("disabled", "low");
     expect(
       JSON.parse(fetchData.mock.calls[2][1].body).generation_config
         .thinking_level
@@ -190,6 +500,7 @@ describe("handleTranslate", () => {
           apiSetting: {
             ...getApiSetting(OPT_TRANS_OPENROUTER),
             useStream: false,
+            model: "provider/reasoning-model",
             thinkingMode,
             thinkingEffort,
           },
@@ -203,22 +514,53 @@ describe("handleTranslate", () => {
     );
 
     await translate("enabled");
-    expect(JSON.parse(fetchData.mock.calls[1][1].body).reasoning).toEqual({
+    expect(JSON.parse(fetchData.mock.calls[1][1].body)).not.toHaveProperty(
+      "reasoning"
+    );
+
+    await translate("enabled", null);
+    expect(JSON.parse(fetchData.mock.calls[2][1].body).reasoning).toEqual({
       enabled: true,
     });
 
     await translate("enabled", "xhigh");
-    expect(JSON.parse(fetchData.mock.calls[2][1].body).reasoning).toEqual({
-      effort: "high",
+    expect(JSON.parse(fetchData.mock.calls[3][1].body).reasoning).toEqual({
+      effort: "xhigh",
     });
 
     await translate("disabled");
-    expect(JSON.parse(fetchData.mock.calls[3][1].body).reasoning).toEqual({
+    expect(JSON.parse(fetchData.mock.calls[4][1].body)).not.toHaveProperty(
+      "reasoning"
+    );
+
+    await translate("disabled", "none");
+    expect(JSON.parse(fetchData.mock.calls[5][1].body).reasoning).toEqual({
       effort: "none",
     });
+
+    await collectAsyncGenerator(
+      handleTranslate(["hello"], {
+        from: "en",
+        to: "zh-CN",
+        fromLang: "English",
+        toLang: "Chinese",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_OPENROUTER),
+          useStream: false,
+          model: "provider/unknown-model",
+          thinkingMode: "enabled",
+        },
+        usePool: false,
+      })
+    );
+    expect(JSON.parse(fetchData.mock.calls[6][1].body)).not.toHaveProperty(
+      "reasoning"
+    );
   });
 
-  test("uses OpenRouter model metadata for supported and mandatory efforts", async () => {
+  test("uses OpenRouter settings already normalized by the settings page", async () => {
     fetchData.mockResolvedValue({
       choices: [{ message: { content: "你好" } }],
     });
@@ -226,11 +568,6 @@ describe("handleTranslate", () => {
       ...getApiSetting(OPT_TRANS_OPENROUTER),
       useStream: false,
       model: "provider/mandatory-model",
-      thinkingCapabilities: {
-        model: "provider/mandatory-model",
-        supportedEfforts: ["high", "medium", "low"],
-        mandatory: true,
-      },
     };
 
     await collectAsyncGenerator(
@@ -244,7 +581,7 @@ describe("handleTranslate", () => {
         apiSetting: {
           ...apiSetting,
           thinkingMode: "enabled",
-          thinkingEffort: "xhigh",
+          thinkingEffort: "high",
         },
         usePool: false,
       })
@@ -261,7 +598,11 @@ describe("handleTranslate", () => {
         toLang: "Chinese",
         langMap: () => "",
         glossary: "",
-        apiSetting: { ...apiSetting, thinkingMode: "disabled" },
+        apiSetting: {
+          ...apiSetting,
+          thinkingMode: "disabled",
+          thinkingEffort: "low",
+        },
         usePool: false,
       })
     );
@@ -270,7 +611,7 @@ describe("handleTranslate", () => {
     });
   });
 
-  test("applies the OpenAI-compatible high/none baseline in requests", async () => {
+  test("does not inject thinking parameters for unknown models", async () => {
     fetchData.mockResolvedValue({
       choices: [{ message: { content: "你好" } }],
     });
@@ -298,13 +639,77 @@ describe("handleTranslate", () => {
       "reasoning_effort"
     );
     await translate("enabled");
-    expect(JSON.parse(fetchData.mock.calls[1][1].body).reasoning_effort).toBe(
-      "high"
+    expect(JSON.parse(fetchData.mock.calls[1][1].body)).not.toHaveProperty(
+      "reasoning_effort"
     );
     await translate("disabled");
-    expect(JSON.parse(fetchData.mock.calls[2][1].body).reasoning_effort).toBe(
-      "none"
+    expect(JSON.parse(fetchData.mock.calls[2][1].body)).not.toHaveProperty(
+      "reasoning_effort"
     );
+  });
+
+  test("does not inject native Gemini parameters for unknown models", async () => {
+    fetchData.mockResolvedValue({
+      status: "completed",
+      steps: [
+        {
+          type: "model_output",
+          content: [{ type: "text", text: "你好" }],
+        },
+      ],
+    });
+
+    await collectAsyncGenerator(
+      handleTranslate(["hello"], {
+        from: "en",
+        to: "zh-CN",
+        fromLang: "English",
+        toLang: "Chinese",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_GEMINI),
+          useStream: false,
+          model: "custom-model",
+          thinkingMode: "enabled",
+          thinkingEffort: "_default",
+        },
+        usePool: false,
+      })
+    );
+
+    expect(
+      JSON.parse(fetchData.mock.calls[0][1].body).generation_config
+    ).not.toHaveProperty("thinking_level");
+  });
+
+  test("keeps DeepSeek enabled when a concrete effort is selected", async () => {
+    fetchData.mockResolvedValue({
+      choices: [{ message: { content: "你好" } }],
+    });
+
+    await collectAsyncGenerator(
+      handleTranslate(["hello"], {
+        from: "en",
+        to: "zh-CN",
+        fromLang: "English",
+        toLang: "Chinese",
+        langMap: () => "",
+        glossary: "",
+        apiSetting: {
+          ...getApiSetting(OPT_TRANS_DEEPSEEK),
+          useStream: false,
+          thinkingMode: "enabled",
+          thinkingEffort: "max",
+        },
+        usePool: false,
+      })
+    );
+
+    expect(JSON.parse(fetchData.mock.calls[0][1].body)).toMatchObject({
+      thinking: { type: "enabled" },
+      reasoning_effort: "max",
+    });
   });
 
   test("maps Gemini2 disabled thinking by model capability", async () => {
@@ -325,6 +730,7 @@ describe("handleTranslate", () => {
           useStream: false,
           model: "gemini-2.5-flash",
           thinkingMode: "disabled",
+          thinkingEffort: "none",
         },
         usePool: false,
       })
@@ -347,6 +753,7 @@ describe("handleTranslate", () => {
           useStream: false,
           model: "gemini-3.5-flash",
           thinkingMode: "disabled",
+          thinkingEffort: "minimal",
         },
         usePool: false,
       })
@@ -356,7 +763,7 @@ describe("handleTranslate", () => {
     );
   });
 
-  test("enables Gemini2 thinking at the highest effort by default", async () => {
+  test("uses the final Gemini2 enabled effort without runtime capability parsing", async () => {
     fetchData.mockResolvedValue({
       choices: [{ message: { content: "你好" } }],
     });
@@ -374,7 +781,7 @@ describe("handleTranslate", () => {
           useStream: false,
           model: "gemini-3.6-flash",
           thinkingMode: "enabled",
-          thinkingEffort: "_default",
+          thinkingEffort: "high",
         },
         usePool: false,
       })
@@ -385,7 +792,7 @@ describe("handleTranslate", () => {
     );
   });
 
-  test("uses thinkingBudget when enabling Gemini 2.5 through generateContent", async () => {
+  test("uses dynamic thinkingBudget by default for Gemini 2.5 generateContent", async () => {
     fetchData.mockResolvedValueOnce({
       candidates: [{ content: { parts: [{ text: "你好" }] } }],
     });
@@ -402,9 +809,9 @@ describe("handleTranslate", () => {
           ...getApiSetting(OPT_TRANS_GEMINI),
           url: GEMINI_GENERATE_CONTENT_URL,
           useStream: false,
-          model: "gemini-2.5-flash-lite",
+          model: "gemini-2.5-flash",
           thinkingMode: "enabled",
-          thinkingEffort: "_default",
+          thinkingEffort: -1,
         },
         usePool: false,
       })
@@ -444,6 +851,7 @@ describe("handleTranslate", () => {
           model: "gemini-3.5-flash",
           temperature: 0.7,
           thinkingMode: "disabled",
+          thinkingEffort: "minimal",
         },
         usePool: false,
       })
