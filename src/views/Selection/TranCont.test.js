@@ -165,10 +165,34 @@ describe("TranCont", () => {
     });
   });
 
-  test("preserves line breaks and decodes HTML entities for Google2", async () => {
+  test("clears streamed text when the final response identifies the same language", async () => {
+    const deferred = createDeferred();
+    apiTranslate.mockReturnValueOnce(deferred.promise);
+
+    const { container, root } = renderTranCont({ translateVariants: false });
+    await flushEffects();
+    const textarea = container.querySelector("textarea");
+
+    await act(async () => {
+      apiTranslate.mock.calls[0][0].onStreamChunk({
+        text: "临时译文",
+        isComplete: false,
+      });
+    });
+    expect(textarea.value).toBe("临时译文");
+
+    await act(async () => {
+      deferred.resolve({ trText: "最终译文", isSame: true });
+      await deferred.promise;
+    });
+    expect(textarea.value).toBe("");
+
+    act(() => root.unmount());
+  });
+
+  test("requests plain text without provider-specific normalization", async () => {
     apiTranslate.mockResolvedValueOnce({
-      trText:
-        "First isn&#39;t &quot;plain&quot; &amp; simple<br><br> Second<br/>\tThird<br /> Fourth",
+      trText: 'First isn\'t "plain" & simple\n\nSecond\nThird\nFourth',
     });
 
     const { container, root } = renderTranCont({
@@ -178,8 +202,11 @@ describe("TranCont", () => {
     });
     await flushEffects();
 
-    expect(apiTranslate.mock.calls[0][0].text).toBe(
-      "First<br><br>Second<br>Third<br>Fourth"
+    expect(apiTranslate.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        text: "First\n\nSecond\r\nThird\rFourth",
+        textFormat: "text",
+      })
     );
     const expectedText =
       'First isn\'t "plain" & simple\n\nSecond\nThird\nFourth';

@@ -53,12 +53,14 @@ import {
   OPT_TRANS_BUILTINAI,
   OPT_TRANS_GOOGLE,
   OPT_TRANS_GOOGLE_2,
+  OPT_TRANS_GOOGLE_CLOUD,
   OPT_TRANS_MICROSOFT,
   OPT_TRANS_DEEPSEEK,
   OPT_TRANS_OPENCODEGO,
   OPT_TRANS_SILICONFLOW,
   OPT_TRANS_XIAOMIMIMO,
   OPT_TRANS_ALIYUNBAILIAN,
+  OPT_TRANS_QWENMT,
   OPT_TRANS_CEREBRAS,
   OPT_TRANS_ZAI,
   OPT_TRANS_DEEPL,
@@ -66,6 +68,8 @@ import {
   OPT_TRANS_BAIDU,
   OPT_TRANS_TENCENT,
   OPT_TRANS_VOLCENGINE,
+  OPT_TRANS_YANDEX,
+  OPT_TRANS_YANDEXFREE,
   OPT_TRANS_OPENAI,
   OPT_TRANS_GEMINI,
   OPT_TRANS_GEMINI_2,
@@ -89,9 +93,11 @@ import {
   BUILTIN_PLACEHOLDERS,
   BUILTIN_PLACETAGS,
   OPT_TRANS_AZUREAI,
-  THINKING_PARAM_MAP,
+  THINKING_API_REGISTRY,
+  getOpenRouterThinkingCapability,
   getThinkingCapability,
-  resolveThinkingStrategy,
+  isThinkingMinimumFallback,
+  normalizeThinkingSettings,
   DEFAULT_NOBATCH_PROMPT_SLUG,
   DEFAULT_BATCH_PROMPT_SLUG,
   DEFAULT_SUBTITLE_PROMPT_SLUG,
@@ -122,11 +128,19 @@ const EPHONEAI_MODELS = [
   "grok-4.20-beta-0309-non-reasoning",
 ];
 
+const QWEN_MT_MODELS = [
+  "qwen-mt-flash",
+  "qwen-mt-plus",
+  "qwen-mt-lite",
+  "qwen-mt-turbo",
+];
+
 // Keep icon paths tied to apiType because apiName is user editable.
 const API_ICON_FILES = {
   [OPT_TRANS_BUILTINAI]: "BuiltinAI.svg",
   [OPT_TRANS_GOOGLE]: "Google.svg",
   [OPT_TRANS_GOOGLE_2]: "Google.svg",
+  [OPT_TRANS_GOOGLE_CLOUD]: "GoogleCloud.svg",
   [OPT_TRANS_MICROSOFT]: "Microsoft.svg",
   [OPT_TRANS_AZUREAI]: "AzureAI.svg",
   [OPT_TRANS_DEEPSEEK]: "DeepSeek.svg",
@@ -134,6 +148,7 @@ const API_ICON_FILES = {
   [OPT_TRANS_SILICONFLOW]: "SiliconFlow.svg",
   [OPT_TRANS_XIAOMIMIMO]: "XiaomiMimo.svg",
   [OPT_TRANS_ALIYUNBAILIAN]: "AliyunBailian.svg",
+  [OPT_TRANS_QWENMT]: "QwenMT.svg",
   [OPT_TRANS_CEREBRAS]: "Cerebras.svg",
   [OPT_TRANS_ZAI]: "Zai.svg",
   [OPT_TRANS_DEEPL]: "DeepL.svg",
@@ -142,6 +157,8 @@ const API_ICON_FILES = {
   [OPT_TRANS_BAIDU]: "Baidu.svg",
   [OPT_TRANS_TENCENT]: "Tencent.svg",
   [OPT_TRANS_VOLCENGINE]: "Volcengine.svg",
+  [OPT_TRANS_YANDEX]: "Yandex.svg",
+  [OPT_TRANS_YANDEXFREE]: "Yandex.svg",
   [OPT_TRANS_EPHONEAI]: "ePhoneAI.png",
   [OPT_TRANS_OPENAI]: "OpenAI.svg",
   [OPT_TRANS_GEMINI]: "Gemini.svg",
@@ -316,9 +333,11 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
   const [modelThinkingCapabilities, setModelThinkingCapabilities] = useState(
     {}
   );
+  const modelThinkingCapabilitiesRef = useRef({});
   const [modelListStatus, setModelListStatus] = useState("idle");
   const [modelListError, setModelListError] = useState("");
   const requestedModelListKeyRef = useRef("");
+  const pendingOpenRouterResolutionRef = useRef(false);
   const confirm = useConfirm();
 
   useLayoutEffect(() => {
@@ -329,9 +348,11 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
     setShowMore(false);
     setModelOptions([]);
     setModelThinkingCapabilities({});
+    modelThinkingCapabilitiesRef.current = {};
     setModelListStatus("idle");
     setModelListError("");
     requestedModelListKeyRef.current = "";
+    pendingOpenRouterResolutionRef.current = false;
   }, [apiSlug]);
 
   const activeFormData = useMemo(
@@ -355,6 +376,35 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
       value = checked;
     }
 
+    const shouldNormalizeThinking = [
+      "model",
+      "url",
+      "thinkingMode",
+      "thinkingEffort",
+    ].includes(name);
+    let cachedOpenRouterMetadata;
+    let nextOpenRouterMode = thinkingMode;
+    if (api?.apiType === OPT_TRANS_OPENROUTER && shouldNormalizeThinking) {
+      const nextModel = name === "model" ? value : model;
+      nextOpenRouterMode = name === "thinkingMode" ? value : thinkingMode;
+      cachedOpenRouterMetadata =
+        modelThinkingCapabilitiesRef.current[nextModel];
+      const cachedOpenRouterCapability = getOpenRouterThinkingCapability(
+        nextModel,
+        cachedOpenRouterMetadata
+      );
+      pendingOpenRouterResolutionRef.current =
+        nextOpenRouterMode !== "auto" && !cachedOpenRouterCapability;
+      if (
+        pendingOpenRouterResolutionRef.current &&
+        modelListStatus === "error"
+      ) {
+        // 失败后的下一次用户操作重新开放请求入口，但不会在错误发生时自动循环重试。
+        setModelListStatus("idle");
+        setModelListError("");
+      }
+    }
+
     setFormData((prevData) => {
       const baseData = prevData?.apiSlug === apiSlug ? prevData : api || {};
       const newData = {
@@ -370,13 +420,18 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
         newData.sortOrder = value ? 999 : 0;
       }
 
-      if (name === "model") {
-        const capabilities = modelThinkingCapabilities[value];
-        if (capabilities) {
-          newData.thinkingCapabilities = capabilities;
-        } else {
-          delete newData.thinkingCapabilities;
+      if (shouldNormalizeThinking && THINKING_API_REGISTRY[baseData.apiType]) {
+        // 模型、URL 或模式变化时先清除旧强度，避免把旧模型的最终值带给新能力。
+        if (["model", "url", "thinkingMode"].includes(name)) {
+          newData.thinkingEffort = "_default";
         }
+        Object.assign(
+          newData,
+          normalizeThinkingSettings({
+            ...newData,
+            openRouterMetadata: cachedOpenRouterMetadata,
+          })
+        );
       }
 
       return newData;
@@ -419,15 +474,18 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
 
   const handleSave = () => {
     const nextFormData = { ...activeFormData };
-    if (
-      thinkingParam &&
-      nextFormData.thinkingEffort &&
-      nextFormData.thinkingEffort !== "_default" &&
-      !thinkingEfforts?.some(
-        (effort) => effort.value === nextFormData.thinkingEffort
-      )
-    ) {
-      nextFormData.thinkingEffort = "_default";
+    if (thinkingParam) {
+      // 保存前再次校验最终两字段，测试请求和持久化配置由此保持完全一致。
+      Object.assign(
+        nextFormData,
+        normalizeThinkingSettings({
+          ...nextFormData,
+          openRouterMetadata:
+            nextFormData.apiType === OPT_TRANS_OPENROUTER
+              ? modelThinkingCapabilitiesRef.current[nextFormData.model]
+              : undefined,
+        })
+      );
     }
     update(nextFormData);
     if (activeFormData.isDisabled || activeFormData.sortOrder === -1) {
@@ -490,11 +548,11 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
     placetag = BUILTIN_PLACETAGS[0],
     placetagFormat = "compact",
     region = "",
+    folderId = "",
     sortOrder = 0,
     aiTerms = "",
     thinkingMode = "disabled",
     thinkingEffort = "_default",
-    thinkingCapabilities,
     batchPromptSlug = "",
     nobatchPromptSlug = "",
     subtitlePromptSlug = "",
@@ -507,34 +565,36 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
     setModelListStatus("idle");
     setModelListError("");
     setModelThinkingCapabilities({});
+    modelThinkingCapabilitiesRef.current = {};
     requestedModelListKeyRef.current = "";
+    pendingOpenRouterResolutionRef.current = false;
   }, [modelListUrl, key]);
 
-  const effectiveThinkingCapabilities =
-    modelThinkingCapabilities[model] || thinkingCapabilities;
-  const thinkingCapability = getThinkingCapability({
-    apiType,
-    model,
-    thinkingCapabilities: effectiveThinkingCapabilities,
-  });
-  const thinkingParam = THINKING_PARAM_MAP[apiType] && thinkingCapability;
+  const thinkingCapability =
+    apiType === OPT_TRANS_OPENROUTER
+      ? getOpenRouterThinkingCapability(model, modelThinkingCapabilities[model])
+      : getThinkingCapability({ apiType, url, model });
+  // 接口支持思考配置但模型未知时仍显示模式选框，便于明确提示本次不会注入参数。
+  const thinkingParam = Boolean(THINKING_API_REGISTRY[apiType]);
+  const hasResolvedOpenRouterThinking =
+    apiType === OPT_TRANS_OPENROUTER &&
+    thinkingEffort !== undefined &&
+    thinkingEffort !== "_default";
+  // OpenRouter 的具体强度由设置页归一化后持久化，可在重新打开页面时直接视为已确认。
+  const isUnknownThinkingModel =
+    thinkingParam && !thinkingCapability && !hasResolvedOpenRouterThinking;
   const thinkingEfforts = thinkingCapability?.efforts;
   const selectedThinkingEffort = thinkingEfforts?.some(
     (effort) => effort.value === thinkingEffort
   )
     ? thinkingEffort
     : "_default";
-  const thinkingDisableStrategy =
-    thinkingMode === "disabled"
-      ? resolveThinkingStrategy({
-          apiType,
-          url,
-          model,
-          thinkingMode,
-          thinkingEffort,
-          thinkingCapabilities: effectiveThinkingCapabilities,
-        })
-      : null;
+  const showUnknownThinkingWarning =
+    isUnknownThinkingModel && thinkingMode !== "auto";
+  const showMinimumThinkingHelper = isThinkingMinimumFallback({
+    capability: thinkingCapability,
+    thinkingMode,
+  });
   const selectedBatchPromptSlug = Object.prototype.hasOwnProperty.call(
     activeFormData,
     "batchPromptSlug"
@@ -582,7 +642,12 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
   );
 
   const allModelOptions = useMemo(() => {
-    const baseOptions = apiType === OPT_TRANS_EPHONEAI ? EPHONEAI_MODELS : [];
+    const baseOptions =
+      apiType === OPT_TRANS_EPHONEAI
+        ? EPHONEAI_MODELS
+        : apiType === OPT_TRANS_QWENMT
+          ? QWEN_MT_MODELS
+          : [];
     return Array.from(new Set([...baseOptions, ...modelOptions]));
   }, [apiType, modelOptions]);
 
@@ -603,6 +668,10 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
   }, [i18n, modelListError, modelListStatus]);
 
   const handleLoadModelList = useCallback(async () => {
+    if (apiType === OPT_TRANS_OPENROUTER && thinkingMode !== "auto") {
+      // 模型目录同时携带 OpenRouter 能力；目录加载完成后立即归一化当前显式设置。
+      pendingOpenRouterResolutionRef.current = true;
+    }
     const requestKey = `${apiSlug}|${modelListUrl}|${key}`;
     if (
       !modelListUrl?.trim() ||
@@ -624,26 +693,84 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
         key,
         httpTimeout,
       });
+      // URL 或密钥变化后，旧请求即使成功也不得覆盖当前模型目录与能力数据。
+      if (requestedModelListKeyRef.current !== requestKey) return;
       const nextModelOptions = catalog.models;
       setModelOptions(nextModelOptions);
+      modelThinkingCapabilitiesRef.current = catalog.thinkingCapabilities;
       setModelThinkingCapabilities(catalog.thinkingCapabilities);
-      setFormData((prevData) => {
-        const baseData = prevData?.apiSlug === apiSlug ? prevData : api || {};
-        const capabilities = catalog.thinkingCapabilities[baseData.model];
-        const newData = { ...baseData };
-        if (capabilities) {
-          newData.thinkingCapabilities = capabilities;
-        } else {
-          delete newData.thinkingCapabilities;
-        }
-        return newData;
-      });
       setModelListStatus(nextModelOptions.length > 0 ? "success" : "empty");
     } catch (err) {
+      // URL 或密钥变化后忽略旧请求的失败结果，避免污染当前接口状态。
+      if (requestedModelListKeyRef.current !== requestKey) return;
+      requestedModelListKeyRef.current = "";
+      pendingOpenRouterResolutionRef.current = false;
       setModelListStatus("error");
       setModelListError(err?.message || String(err));
     }
-  }, [api, apiSlug, apiType, httpTimeout, key, modelListStatus, modelListUrl]);
+  }, [
+    apiSlug,
+    apiType,
+    httpTimeout,
+    key,
+    modelListStatus,
+    modelListUrl,
+    thinkingMode,
+  ]);
+
+  useEffect(() => {
+    if (
+      apiType !== OPT_TRANS_OPENROUTER ||
+      !pendingOpenRouterResolutionRef.current ||
+      thinkingMode === "auto"
+    ) {
+      return;
+    }
+
+    const capability = getOpenRouterThinkingCapability(
+      model,
+      modelThinkingCapabilities[model]
+    );
+    if (!capability) {
+      if (modelListStatus === "idle") void handleLoadModelList();
+      if (["success", "empty", "error"].includes(modelListStatus)) {
+        pendingOpenRouterResolutionRef.current = false;
+      }
+      return;
+    }
+
+    const resolved = normalizeThinkingSettings({
+      apiType,
+      url,
+      model,
+      thinkingMode,
+      thinkingEffort,
+      openRouterMetadata: modelThinkingCapabilities[model],
+    });
+    setFormData((prevData) => {
+      const baseData = prevData?.apiSlug === apiSlug ? prevData : api || {};
+      // 异步目录返回后只更新仍指向同一模型和模式的表单，避免覆盖用户的新操作。
+      if (baseData.model !== model || baseData.thinkingMode !== thinkingMode) {
+        return baseData;
+      }
+      return {
+        ...baseData,
+        thinkingEffort: resolved.thinkingEffort,
+      };
+    });
+    pendingOpenRouterResolutionRef.current = false;
+  }, [
+    api,
+    apiSlug,
+    apiType,
+    handleLoadModelList,
+    model,
+    modelListStatus,
+    modelThinkingCapabilities,
+    thinkingEffort,
+    thinkingMode,
+    url,
+  ]);
 
   return (
     <Stack spacing={3}>
@@ -689,7 +816,7 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
         </Grid>
       </Box>
 
-      {!API_SPE_TYPES.machine.has(apiType) &&
+      {(!API_SPE_TYPES.machine.has(apiType) || apiType === OPT_TRANS_QWENMT) &&
         apiType !== OPT_TRANS_BUILTINAI && (
           <>
             <TextField
@@ -727,16 +854,28 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
         />
       )}
 
-      {API_SPE_TYPES.ai.has(apiType) && (
+      {apiType === OPT_TRANS_YANDEX && (
+        <TextField
+          size="small"
+          label={"Folder ID"}
+          name="folderId"
+          value={folderId}
+          onChange={handleChange}
+        />
+      )}
+
+      {(API_SPE_TYPES.ai.has(apiType) || apiType === OPT_TRANS_QWENMT) && (
         <>
-          <TextField
-            size="small"
-            fullWidth
-            label={i18n("model_list_url")}
-            name="modelListUrl"
-            value={modelListUrl}
-            onChange={handleChange}
-          />
+          {apiType !== OPT_TRANS_QWENMT && (
+            <TextField
+              size="small"
+              fullWidth
+              label={i18n("model_list_url")}
+              name="modelListUrl"
+              value={modelListUrl}
+              onChange={handleChange}
+            />
+          )}
           <Box>
             <Grid container spacing={2} columns={12}>
               <Grid item xs={12} sm={12} md={6} lg={3}>
@@ -771,7 +910,8 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
                   onChange={handleChange}
                 />
               </Grid>
-              {apiType !== OPT_TRANS_GEMINI &&
+              {apiType !== OPT_TRANS_QWENMT &&
+                apiType !== OPT_TRANS_GEMINI &&
                 apiType !== OPT_TRANS_GEMINI_2 && (
                   <Grid item xs={12} sm={12} md={6} lg={3}>
                     <ValidationInput
@@ -791,19 +931,21 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
                     />
                   </Grid>
                 )}
-              <Grid item xs={12} sm={12} md={6} lg={3}>
-                <ValidationInput
-                  size="small"
-                  fullWidth
-                  label={"Max Tokens (0-1000000)"}
-                  type="number"
-                  name="maxTokens"
-                  value={maxTokens}
-                  onChange={handleChange}
-                  min={0}
-                  max={1000000}
-                />
-              </Grid>
+              {apiType !== OPT_TRANS_QWENMT && (
+                <Grid item xs={12} sm={12} md={6} lg={3}>
+                  <ValidationInput
+                    size="small"
+                    fullWidth
+                    label={"Max Tokens (0-1000000)"}
+                    type="number"
+                    name="maxTokens"
+                    value={maxTokens}
+                    onChange={handleChange}
+                    min={0}
+                    max={1000000}
+                  />
+                </Grid>
+              )}
             </Grid>
           </Box>
         </>
@@ -1158,10 +1300,13 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
                 value={thinkingMode}
                 label={i18n("thinking_mode")}
                 onChange={handleChange}
+                error={showUnknownThinkingWarning}
                 helperText={
-                  thinkingDisableStrategy?.fallback
-                    ? i18n("gemini_thinking_minimum_helper")
-                    : i18n("thinking_mode_helper")
+                  showUnknownThinkingWarning
+                    ? i18n("thinking_unknown_model_helper")
+                    : showMinimumThinkingHelper
+                      ? i18n("gemini_thinking_minimum_helper")
+                      : i18n("thinking_mode_helper")
                 }
               >
                 <MenuItem value="auto">
@@ -1191,9 +1336,12 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
                       {e.label}
                     </MenuItem>
                   ))}
-                  <MenuItem value="_default">
-                    {i18n("thinking_effort_default")}
-                  </MenuItem>
+                  {(apiType !== OPT_TRANS_OPENROUTER ||
+                    thinkingEffort === null) && (
+                    <MenuItem value="_default">
+                      {i18n("thinking_effort_default")}
+                    </MenuItem>
+                  )}
                 </TextField>
               </Grid>
             )}
@@ -1260,7 +1408,7 @@ function ApiFields({ apiSlug, deleteApi, copyApi, onCollapse }) {
             </Grid>
           </Box>
 
-          {API_SPE_TYPES.ai.has(apiType) && (
+          {(API_SPE_TYPES.ai.has(apiType) || apiType === OPT_TRANS_QWENMT) && (
             <TextField
               size="small"
               label={i18n("ai_terms")}

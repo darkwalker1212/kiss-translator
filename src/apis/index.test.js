@@ -84,6 +84,7 @@ import {
   OPT_TRANS_DEEPL,
   OPT_TRANS_DEEPLX,
   OPT_TRANS_OPENAI,
+  OPT_TRANS_QWENMT,
 } from "../config";
 
 const getOpenAiApiSetting = (systemPrompt) => ({
@@ -432,6 +433,59 @@ describe("apiTranslate prompt queue isolation", () => {
     expect(queueKeys[0]).not.toBe(queueKeys[1]);
   });
 
+  test("includes translation style and glossary in the shared prompt signature", async () => {
+    const glossary = { React: "React", component: "组件" };
+
+    await apiTranslate({
+      text: "hello",
+      fromLang: "en",
+      toLang: "zh-CN",
+      glossary,
+      apiSetting: {
+        ...getOpenAiApiSetting("batch prompt A"),
+        tone: "technical",
+        aiTerms: "API,接口",
+      },
+      useCache: false,
+    });
+
+    expect(mockGetCacheDigest).toHaveBeenCalledWith(
+      [
+        "batch",
+        "batch prompt A",
+        "technical",
+        "API,接口",
+        JSON.stringify(Object.entries(glossary).sort()),
+      ].join("\n"),
+      "prompt-cache"
+    );
+  });
+
+  test("isolates plain-text and HTML batch queues", async () => {
+    const apiSetting = getOpenAiApiSetting("batch prompt A");
+    await apiTranslate({
+      text: "plain text",
+      fromLang: "en",
+      toLang: "zh-CN",
+      apiSetting,
+      textFormat: "text",
+      useCache: false,
+    });
+    await apiTranslate({
+      text: "<p>HTML</p>",
+      fromLang: "en",
+      toLang: "zh-CN",
+      apiSetting,
+      textFormat: "html",
+      useCache: false,
+    });
+
+    const queueKeys = getBatchQueue.mock.calls.map(([key]) => key);
+    expect(queueKeys[0]).toContain("_text_");
+    expect(queueKeys[1]).toContain("_html_");
+    expect(queueKeys[0]).not.toBe(queueKeys[1]);
+  });
+
   test("does not include subtitle prompt in batch queue key", async () => {
     await apiTranslate({
       text: "hello",
@@ -535,6 +589,57 @@ describe("apiTranslate prompt queue isolation", () => {
   });
 });
 
+describe("apiTranslate QwenMT cache identity", () => {
+  beforeEach(() => {
+    getHttpCachePolyfill.mockResolvedValue(null);
+    mockGetCacheDigest.mockImplementation(async (text, salt) =>
+      `${salt}:${text}`.padEnd(64, "a")
+    );
+    handleTranslate.mockImplementation(async function* () {
+      yield { id: 0, result: ["translated"] };
+    });
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("signs style, interface terms, and rule glossary", async () => {
+    const apiSetting = {
+      ...DEFAULT_API_LIST.find((api) => api.apiType === OPT_TRANS_QWENMT),
+      apiSlug: "qwen_mt_test",
+      key: "test-key",
+      tone: "technical",
+      aiTerms: "component,组件",
+    };
+    const glossary = { React: "React", component: "规则组件" };
+
+    await apiTranslate({
+      text: "hello",
+      fromLang: "auto",
+      toLang: "en",
+      glossary,
+      apiSetting,
+      useCache: false,
+    });
+
+    expect(mockGetCacheDigest).toHaveBeenCalledWith(
+      [
+        "qwen-mt",
+        "technical",
+        "component,组件",
+        JSON.stringify(Object.entries(glossary).sort()),
+      ].join("\n"),
+      "prompt-cache"
+    );
+    expect(getBatchQueue).not.toHaveBeenCalled();
+    expect(handleTranslate).toHaveBeenCalledWith(
+      ["hello"],
+      expect.objectContaining({ glossary, apiSetting })
+    );
+  });
+});
+
 describe("apiTranslate DeepL language mappings", () => {
   beforeEach(() => {
     mockGetCacheDigest.mockResolvedValue("a".repeat(64));
@@ -564,6 +669,75 @@ describe("apiTranslate DeepL language mappings", () => {
       expect.objectContaining({ from: "ZH", to: "ZH-HANT" })
     );
     expect(result.srCode).toBe("zh-CN");
+  });
+
+  test("uses the variant translation setting for normalized API source languages", async () => {
+    const addTask = jest.fn().mockResolvedValue(["繁體譯文", "ZH"]);
+    getBatchQueue.mockReturnValue({ addTask });
+    const apiSetting = {
+      ...DEFAULT_API_LIST.find((api) => api.apiType === OPT_TRANS_DEEPL),
+      apiSlug: "deepl_variant_test",
+    };
+
+    const enabled = await apiTranslate({
+      text: "简体原文",
+      fromLang: "auto",
+      toLang: "zh-TW",
+      apiSetting,
+      useCache: false,
+    });
+    const disabled = await apiTranslate({
+      text: "简体原文",
+      fromLang: "auto",
+      toLang: "zh-TW",
+      apiSetting,
+      translateVariants: false,
+      useCache: false,
+    });
+
+    expect(enabled.isSame).toBe(false);
+    expect(disabled.isSame).toBe(true);
+  });
+
+  test("does not infer a specific Chinese variant from generic ZH", async () => {
+    const addTask = jest.fn().mockResolvedValue(["简体译文", "ZH"]);
+    getBatchQueue.mockReturnValue({ addTask });
+
+    const result = await apiTranslate({
+      text: "繁體原文",
+      fromLang: "auto",
+      toLang: "zh-CN",
+      apiSetting: {
+        ...DEFAULT_API_LIST.find((api) => api.apiType === OPT_TRANS_DEEPL),
+        apiSlug: "deepl_generic_zh_test",
+      },
+      useCache: false,
+    });
+
+    expect(result.srCode).toBe("zh-CN");
+    expect(result.isSame).toBe(false);
+  });
+
+  test("recomputes a cached generic Chinese language match", async () => {
+    getHttpCachePolyfill.mockResolvedValueOnce({
+      trText: "简体译文",
+      srLang: "ZH",
+      srCode: "zh-CN",
+      isSame: true,
+    });
+
+    const result = await apiTranslate({
+      text: "繁體原文",
+      fromLang: "auto",
+      toLang: "zh-CN",
+      apiSetting: {
+        ...DEFAULT_API_LIST.find((api) => api.apiType === OPT_TRANS_DEEPL),
+        apiSlug: "deepl_cached_generic_zh_test",
+      },
+    });
+
+    expect(result.isSame).toBe(false);
+    expect(getBatchQueue).not.toHaveBeenCalled();
   });
 
   test("uses a Traditional Chinese target variant and generic Chinese source for DeepLX", async () => {

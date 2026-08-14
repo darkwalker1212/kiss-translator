@@ -1,6 +1,6 @@
 ---
 name: release-kiss-translator
-description: Safely prepare and publish a complete KISS Translator release using the repository's version scripts, Chinese CHANGELOG convention, dev-to-master pull request flow, annotated version tags, and GitHub Actions release workflow. Use when asked to bump the project version, prepare a release, update release notes, create the release PR, publish a version tag, or complete the end-to-end KISS Translator release process.
+description: Safely automate a complete KISS Translator release using the repository's version scripts, Chinese CHANGELOG convention, dev-to-master pull request flow, annotated version tags, and GitHub Actions release workflow. Use when asked to bump the project version, prepare a release, update release notes, create and merge the release PR, publish a version tag, or complete the end-to-end KISS Translator release process without intermediate confirmations.
 ---
 
 # Release KISS Translator
@@ -9,8 +9,8 @@ Follow `VERSION_MANAGEMENT.md` and the repository's current scripts and workflow
 
 ## Safety rules
 
-- Never push commits directly to `master`, force-push, overwrite a tag, bypass a failed check, or merge a release PR without explicit user confirmation.
-- Require a second explicit confirmation immediately before creating and pushing the release tag. The earlier PR-merge confirmation does not authorize tag publication.
+- Treat a request to complete a release as authorization to merge the release PR and create and push the release tag after every required check passes. Do not pause for confirmation at either step.
+- Never push commits directly to `master`, force-push, overwrite a tag, bypass a failed check, or merge a release PR before all required checks pass.
 - Stop on a dirty worktree, a branch other than `dev`, divergent local/remote branches, invalid GitHub authentication, an existing target tag, version disagreement, unexpected formatted files, failed checks, or failed builds.
 - Do not stash, reset, discard, or absorb unrelated user changes. Do not repair authentication or change repository settings without a separate request.
 - Use the repository's existing `pnpm version:*` commands. Do not manually edit `.env` or manifest versions.
@@ -58,8 +58,8 @@ Follow `VERSION_MANAGEMENT.md` and the repository's current scripts and workflow
 
 1. Create or reuse the single open `dev` to `master` PR titled `Release v<target>`. Include the new CHANGELOG section in its body.
 2. Watch all required checks to completion. If any check fails, stop and report it; do not merge.
-3. Present the PR URL, target version, checks, and release-note summary. Ask for explicit confirmation to merge.
-4. Only after confirmation, merge using the repository's normal merge-commit strategy. Verify the PR is merged and record its merge commit.
+3. Present the PR URL, target version, checks, and release-note summary as a progress update without pausing.
+4. After all required checks pass, merge automatically using the repository's normal merge-commit strategy. Verify the PR is merged and record its merge commit.
 
 ## 4. Publish the tag
 
@@ -71,8 +71,8 @@ Follow `VERSION_MANAGEMENT.md` and the repository's current scripts and workflow
    ```
 
 2. Verify `master` contains the recorded PR merge commit, the target version in every version file, and `## v<target>` as the first CHANGELOG section. Recheck that `v<target>` does not exist locally or remotely.
-3. Show the exact tag command and explain that pushing it triggers `.github/workflows/release.yml`. Ask for a second explicit confirmation to create and push the tag.
-4. Only after confirmation, run:
+3. Report the exact tag command and explain that pushing it triggers `.github/workflows/release.yml`, then continue without pausing.
+4. After every verification passes, run automatically:
 
    ```bash
    git tag -a v<target> -m "Release version <target>"
