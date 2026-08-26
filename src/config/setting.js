@@ -192,6 +192,8 @@ export const DEFAULT_SUBTITLE_SETTING = {
   autoFavWord: false, // 字幕悬停查词成功后是否自动收藏单词
   showList: OPT_ENHANCE_MOBILE_OFF, // 是否在侧边/右侧显示字幕全文滚动历史面板
   hideSubtitleButton: false, // 是否隐藏 YouTube 播放器中的字幕功能按钮
+  rememberPosition: false, // 是否记住字幕拖动后的相对位置
+  positionRatio: 0.05, // 字幕底边相对播放器高度的比例
   aiContextSlug: "-", // 是否为字幕启用智能上下文，以获取更好的代词翻译效果
   segPromptMode: PROMPT_MODE_FOLLOW_API, // AI 断句提示词来源：接口默认或指定 subtitle prompt
   segPromptSlug: DEFAULT_SUBTITLE_PROMPT_SLUG, // 指定的 subtitle prompt slug，仅在指定提示词模式下生效
@@ -273,7 +275,6 @@ export const DEFAULT_SETTING = {
   // owSubrule: DEFAULT_OW_RULE, // 覆写订阅规则 (作废)
   transApis: DEFAULT_API_LIST, // 缓存的全部可用翻译 API 配置列表（数组格式）
   prompts: [], // 用户自定义提示词；预设提示词由 config/prompt.js 提供，不写入本地配置
-  deletedTransApiSlugs: [], // 用户手动删除的默认翻译接口标识
   // mouseKey: OPT_TIMING_PAGESCROLL, // 翻译时机/鼠标悬停翻译(移至rule，作废)
   shortcuts: DEFAULT_SHORTCUTS, // 键盘快捷键配置对象
   inputRule: DEFAULT_INPUT_RULE, // 输入框即时翻译相关配置
