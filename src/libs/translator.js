@@ -1493,9 +1493,13 @@ export class Translator {
       const selectionText = window.getSelection?.()?.toString()?.trim();
       if (selectionText) return;
       this.#mouseHoldTriggered = true;
-      // 每次触发翻译/还原都推进代次，语言检测等异步环节据此废弃过期任务
-      this.#holdGeneration += 1;
-      const accepted = this.#handleMouseHoldToggle();
+      // 先为本次按住生成候选代次，只有目标解析和规则校验实际接受后
+      // 才推进全局代次，避免“按在无效目标上”误伤其他正在检测的任务。
+      const generation = this.#holdGeneration + 1;
+      const accepted = this.#handleMouseHoldToggle(generation);
+      if (accepted) {
+        this.#holdGeneration = generation;
+      }
       // 只有实际接受（翻译或还原）了目标时才启用点击抑制：
       // 被规则排除或未命中任何目标的按住不应吞掉后续的导航/按钮点击
       if (
@@ -1553,7 +1557,7 @@ export class Translator {
   }
 
   // 按住左键到点后执行：优先翻译/还原光标所在的整块文字区域
-  #handleMouseHoldToggle() {
+  #handleMouseHoldToggle(generation) {
     if (!this.#isInitialized) {
       this.#init();
     }
@@ -1631,7 +1635,7 @@ export class Translator {
     const atomicTarget = this.#findAtomicHoldTarget(targetNode);
     if (atomicTarget) {
       if (this.#isHoldTargetAllowed(atomicTarget)) {
-        this.#toggleTargetNode(atomicTarget, true, false, this.#holdGeneration);
+        this.#toggleTargetNode(atomicTarget, true, false, generation);
         return true;
       }
       // 原子目标被规则排除时，回退到悬停时登记的容器/原文单元
@@ -1663,7 +1667,7 @@ export class Translator {
         targetNode,
         true,
         this.#getMouseHoldBlockDisplay(),
-        this.#holdGeneration
+        generation
       );
       return true;
     }
@@ -1674,11 +1678,11 @@ export class Translator {
         targetNode,
         true,
         this.#getMouseHoldBlockDisplay(),
-        this.#holdGeneration
+        generation
       );
       return true;
     }
-    return this.#toggleHoverBlock(area, this.#holdGeneration);
+    return this.#toggleHoverBlock(area, generation);
   }
 
   // 查找可作为独立翻译目标的链接/按钮等可交互文字元素。
@@ -2020,7 +2024,13 @@ export class Translator {
       const hasPendingTranslation = Array.from(
         this.#findTranslationWrappers(targetNode)
       ).some((wrapper) => !this.#translationNodes.has(wrapper));
-      if (hasPendingTranslation) return;
+      if (hasPendingTranslation) {
+        // 按住路径需要“再次按住还原”：移除仍处于 loading 的 wrapper，
+        // 后续请求会通过 wrapper.isConnected 防护丢弃过期结果。
+        if (!forceInline) return;
+        this.#cleanupDirectTranslations(targetNode);
+        return;
+      }
       this.#cleanupDirectTranslations(targetNode);
     } else {
       this.#processNode(targetNode, { blockDisplay, generation });
@@ -2370,8 +2380,9 @@ export class Translator {
     }
 
     this.#processedNodes.set(node, { ...this.#rule });
-    // 按住操作代次：语言检测等异步环节完成后据此判断任务是否已过期
+    // 按住操作代次与 runId：语言检测等异步环节完成后据此判断任务是否已过期
     const generation = options.generation;
+    const runId = this.#runId;
     if (generation !== undefined) {
       this.#holdProcessGenerations.set(node, generation);
     } else {
@@ -2399,11 +2410,14 @@ export class Translator {
     if (fromLang === "auto") {
       // revert 529
       deLang = await tryDetectLang(node.textContent, langDetector);
-      // 语言检测期间可能发生了还原或重新触发（按住代次变化）：
+      // 语言检测期间可能发生了还原、重新触发或停止/重扫：
       // 任务已失效，不再创建译文容器或发起翻译请求。
       // 若当前节点仍由本代次任务标记，则回滚处理状态，避免单段/原子目标
       // 在还原后永久停留在 processed 状态，导致后续按住无法再次翻译。
-      if (generation !== undefined && generation !== this.#holdGeneration) {
+      if (
+        generation !== undefined &&
+        (generation !== this.#holdGeneration || runId !== this.#runId)
+      ) {
         if (this.#holdProcessGenerations.get(node) === generation) {
           this.#processedNodes.delete(node);
           this.#holdProcessGenerations.delete(node);
@@ -4420,6 +4434,8 @@ overflow-wrap: anywhere !important;`;
 
   // 停止监听，重置参数
   #resetOptions() {
+    // 停止/重扫会清理实例状态，语言检测中的按住任务必须立即过期
+    this.#holdGeneration += 1;
     this.#removeShadowRootListener();
 
     this.#io.disconnect();
@@ -4495,6 +4511,8 @@ overflow-wrap: anywhere !important;`;
     this.#removeKeydownHandler2?.();
     this.#removeMouseHoldHandlers?.();
     this.#cancelMouseHold();
+    // 关闭鼠标悬停翻译时同样废弃语言检测中的按住任务
+    this.#holdGeneration += 1;
     this.#holdUnitsCache = new WeakMap();
   }
 
@@ -4715,6 +4733,8 @@ overflow-wrap: anywhere !important;`;
     this.#enabled = false;
     this.#rule.transOpen = "false";
     this.#runId++;
+    // 关闭翻译时立即废弃语言检测中的按住任务
+    this.#holdGeneration += 1;
 
     this.#cleanupAllNodes();
     clearFetchPool();
@@ -4810,6 +4830,7 @@ overflow-wrap: anywhere !important;`;
           key === "autoScan" ||
           key === "blockSelector" ||
           key === "hasShadowroot" ||
+          key === "rootsSelector" ||
           key === "scanAll" ||
           key === "isPlainText"
         ) {
