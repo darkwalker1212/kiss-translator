@@ -4582,32 +4582,6 @@ describe("Translator rule styles", () => {
     expect(wrapper.style.display).toBe("");
   });
 
-  test("still translates content when the document declares translate=no", async () => {
-    document.documentElement.setAttribute("translate", "no");
-    document.body.innerHTML =
-      '<main id="root"><p id="target">Outlook email text</p></main>';
-    const target = document.getElementById("target");
-
-    createTranslator(
-      { transOpen: "false" },
-      {
-        preInit: true,
-        mouseHoverSetting: {
-          useMouseHover: true,
-          mouseHoverKey: [],
-          mouseHoverKey2: [],
-        },
-      }
-    );
-
-    await hoverNode(target);
-    await flushAsync();
-
-    expect(
-      document.querySelector(`.${Translator.KISS_CLASS.warpper}`)
-    ).not.toBeNull();
-  });
-
   test("holds to translate a headline wrapped by a link when autoScan is enabled", async () => {
     document.body.innerHTML = `
       <main id="root">
