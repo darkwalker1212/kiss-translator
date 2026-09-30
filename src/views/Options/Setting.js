@@ -37,11 +37,13 @@ import {
   MSG_CONTEXT_MENUS,
   MSG_UPDATE_CSP,
   DEFAULT_HTTP_TIMEOUT,
+  getSettingVersion,
   OPT_LANGS_TO_REVERSED as OPT_LANGS_TO,
 } from "../../config";
 import { useShortcut } from "../../hooks/Shortcut";
 import ShortcutInput from "./ShortcutInput";
 import { useFab } from "../../hooks/Fab";
+import { normalizeFabAppearance } from "../../config/fab";
 import { sendBgMsg } from "../../libs/msg";
 import { tryClearCaches } from "../../libs/cache";
 import { kissLog, LogLevel } from "../../libs/log";
@@ -49,6 +51,7 @@ import UploadButton from "./UploadButton";
 import DownloadButton from "./DownloadButton";
 import ValidationInput from "../../hooks/ValidationInput";
 import OverviewHero from "./OverviewHero";
+import FabAppearanceSetting from "./FabAppearanceSetting";
 
 /**
  * 包装单个快捷键录入表单项组件
@@ -255,10 +258,11 @@ export default function Settings() {
     }
   };
 
-  // 导入备份 JSON 配置文件
+  // Resolve the backup schema before merging with the current settings.
   const handleImport = async (data) => {
     try {
-      updateSetting(JSON.parse(data));
+      const imported = JSON.parse(data);
+      updateSetting({ ...imported, version: getSettingVersion(imported) });
     } catch (err) {
       kissLog("import setting", err);
     }
@@ -285,6 +289,7 @@ export default function Settings() {
     translateVariants = true,
     parseLatex = false,
     autoTranslateClipboard = false,
+    checkUpdate = true,
     popupDefaultView = OPT_POPUP_DEFAULT_VIEW_PAGE,
   } = setting;
   const normalizedPopupDefaultView = OPT_POPUP_DEFAULT_VIEW_ALL.includes(
@@ -298,6 +303,7 @@ export default function Settings() {
     fabClickAction = 0,
     hideExceptionList = "",
   } = fab || {};
+  const { halfHide } = normalizeFabAppearance(fab);
 
   return (
     <Box>
@@ -578,6 +584,22 @@ export default function Settings() {
                 ))}
               </TextField>
             </Grid>
+            {/* 是否在进入设置页时自动检查更新 */}
+            <Grid item xs={12} sm={12} md={6} lg={6}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                name="checkUpdate"
+                value={checkUpdate}
+                label={i18n("check_update")}
+                helperText={i18n("check_update_helper")}
+                onChange={handleChange}
+              >
+                <MenuItem value={true}>{i18n("enable")}</MenuItem>
+                <MenuItem value={false}>{i18n("disable")}</MenuItem>
+              </TextField>
+            </Grid>
           </Grid>
         </Box>
 
@@ -616,6 +638,22 @@ export default function Settings() {
           <MenuItem value={false}>{i18n("show")}</MenuItem>
           <MenuItem value={true}>{i18n("hide")}</MenuItem>
         </TextField>
+
+        <TextField
+          select
+          fullWidth
+          size="small"
+          name="halfHide"
+          value={halfHide}
+          label={i18n("fab_half_hide")}
+          helperText={i18n("fab_half_hide_helper")}
+          onChange={(e) => updateFab({ halfHide: e.target.value })}
+        >
+          <MenuItem value={true}>{i18n("enable")}</MenuItem>
+          <MenuItem value={false}>{i18n("disable")}</MenuItem>
+        </TextField>
+
+        <FabAppearanceSetting fab={fab} onChange={updateFab} />
 
         <TextField
           fullWidth

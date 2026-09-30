@@ -5,6 +5,7 @@ import {
   OPT_TRANS_GOOGLE_CLOUD,
   OPT_TRANS_MICROSOFT,
   OPT_TRANS_AZUREAI,
+  OPT_TRANS_APIMART,
   OPT_TRANS_DEEPL,
   OPT_TRANS_DEEPLFREE,
   OPT_TRANS_DEEPLX,
@@ -30,6 +31,7 @@ import {
   OPT_TRANS_OLLAMA,
   OPT_TRANS_OPENROUTER,
   OPT_TRANS_ORCAROUTER,
+  OPT_TRANS_REQUESTY,
   OPT_TRANS_CUSTOMIZE,
   API_SPE_TYPES,
   INPUT_PLACE_FROM,
@@ -49,16 +51,21 @@ import {
   INPUT_PLACE_TO_LANG,
   INPUT_PLACE_FROM_LANG,
   INPUT_PLACE_GLOSSARY,
+  INPUT_PLACE_SEGMENTS,
   defaultSystemPromptXml,
   defaultSystemPromptLines,
   INPUT_PLACE_SUMMARY,
   INPUT_PLACE_CONTEXT,
   GEMINI25_BUDGETS,
   THINKING_API_REGISTRY,
+  isGPT6Astra,
   isGeminiInteractionsUrl,
   normalizeGeminiModelName,
   normalizeThinkingSettings,
   BUILTIN_STONES,
+  PROMPT_PROTOCOL_LINE,
+  PROMPT_PROTOCOL_XML,
+  PROMPT_PROTOCOL_JSON,
 } from "../config";
 import { genDeeplFree } from "./deepl";
 import { genBaidu } from "./baidu";
@@ -144,8 +151,73 @@ const genSystemPrompt = ({
     .replaceAll(INPUT_PLACE_TO_LANG, toLang)
     .replaceAll(INPUT_PLACE_TEXT, texts[0]);
 
+// 构建 Hy-MT 官方范式的术语与语气前置约束块
+const buildHyMtGlossaryBlock = (glossary) => {
+  const entries = Object.entries(glossary || {});
+  if (entries.length === 0) return "";
+  return `Reference the following translations:\n${entries
+    .map(([k, v]) => {
+      const source = String(k ?? "").trim();
+      const target = String(v ?? "").trim();
+      return `${source} translates to ${target || source}`;
+    })
+    .join("\n")}`;
+};
+
+const buildHyMtToneBlock = (tone) => {
+  const trimmed = String(tone || "").trim();
+  if (!trimmed) return "";
+  return `Note that the translation style must strictly conform to [${trimmed}].`;
+};
+
+// 构建独立上下文信息块
+const buildTitleBlock = (title) => {
+  const t = String(title || "").trim();
+  return t ? `Title: ${t}` : "";
+};
+
+const buildDescriptionBlock = (description) => {
+  const d = String(description || "").trim();
+  return d ? `Description: ${d}` : "";
+};
+
+const buildSummaryBlock = (summary) => {
+  const s = String(summary || "").trim();
+  return s ? `Summary: ${s}` : "";
+};
+
+const buildContextBlock = (context) => {
+  const c = String(context || "").trim();
+  return c ? `Context: ${c}` : "";
+};
+
+// 智能替换块级占位符：独立成行时展开或彻底抹除，行内时普通替换
+const renderBlockPlaceholder = (
+  template,
+  placeholder,
+  blockContent,
+  inlineContent = blockContent
+) => {
+  if (!template.includes(placeholder)) return template;
+  const standaloneRegex = new RegExp(
+    `^[ \\t]*${placeholder.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}[ \\t]*(?:\\r?\\n|$)`,
+    "gm"
+  );
+  if (blockContent && blockContent.trim()) {
+    template = template.replace(standaloneRegex, `${blockContent.trim()}\n\n`);
+  } else {
+    template = template.replace(standaloneRegex, "");
+  }
+  return template.replaceAll(
+    placeholder,
+    inlineContent ? String(inlineContent).trim() : ""
+  );
+};
+
 const genUserPrompt = ({
   nobatchUserPrompt,
+  batchUserPrompt,
+  batchProtocol = "line",
   useBatchFetch,
   tone,
   glossary = {}, // 规则中的AI专业术语
@@ -163,7 +235,117 @@ const genUserPrompt = ({
     glossary = { ...glossary, ...aiGlossary };
   }
 
+  const glossaryStr = Object.entries(glossary)
+    .map(([term, definition]) => {
+      const src = String(term ?? "").trim();
+      const target = String(definition ?? "").trim();
+      return `- ${src}: ${target || src}`;
+    })
+    .join("\n");
+
   if (useBatchFetch) {
+    if (batchUserPrompt && batchUserPrompt.trim()) {
+      let segmentsStr = "";
+      if (batchProtocol === "xml") {
+        segmentsStr = `<root>\n${texts
+          .map((text, i) => `  <t id="${i}">${text}</t>`)
+          .join("\n")}\n</root>`;
+      } else if (batchProtocol === "json") {
+        segmentsStr = JSON.stringify(texts.map((text, i) => ({ id: i, text })));
+      } else {
+        // 默认按 line 单行管道协议格式化，句子内部换行转义为 <br>
+        segmentsStr = texts
+          .map(
+            (text, i) =>
+              `${i} | ${String(text ?? "").replace(/\r?\n/g, "<br>")}`
+          )
+          .join("\n");
+      }
+
+      const glossaryBlock = buildHyMtGlossaryBlock(glossary);
+      const toneBlock = buildHyMtToneBlock(tone);
+      const titleBlock = buildTitleBlock(title);
+      const descriptionBlock = buildDescriptionBlock(description);
+      const summaryBlock = buildSummaryBlock(summary);
+      const contextBlock = buildContextBlock(context);
+
+      // 未显式声明占位符的非空术语和语气，参照 Hy-MT 范式自动前置注入（聚合场景丢弃上下文）
+      const unreferencedConstraints = [];
+      if (
+        !batchUserPrompt.includes(INPUT_PLACE_GLOSSARY) &&
+        Object.keys(glossary).length > 0
+      ) {
+        unreferencedConstraints.push(glossaryBlock);
+      }
+      if (
+        !batchUserPrompt.includes(INPUT_PLACE_TONE) &&
+        tone &&
+        String(tone).trim()
+      ) {
+        unreferencedConstraints.push(toneBlock);
+      }
+
+      let compiled = String(batchUserPrompt);
+
+      // 智能替换块级占位符（上下文各个独立字段、术语、语气）
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_TITLE,
+        titleBlock,
+        title
+      );
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_DESCRIPTION,
+        descriptionBlock,
+        description
+      );
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_SUMMARY,
+        summaryBlock,
+        summary
+      );
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_CONTEXT,
+        contextBlock,
+        context
+      );
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_GLOSSARY,
+        glossaryBlock,
+        glossaryStr
+      );
+      compiled = renderBlockPlaceholder(
+        compiled,
+        INPUT_PLACE_TONE,
+        toneBlock,
+        tone
+      );
+
+      // 替换其他常规文本占位符
+      compiled = compiled
+        .replaceAll(INPUT_PLACE_FROM, from)
+        .replaceAll(INPUT_PLACE_TO, to)
+        .replaceAll(INPUT_PLACE_FROM_LANG, fromLang)
+        .replaceAll(INPUT_PLACE_TO_LANG, toLang);
+
+      if (compiled.includes(INPUT_PLACE_SEGMENTS)) {
+        compiled = compiled.replaceAll(INPUT_PLACE_SEGMENTS, segmentsStr);
+      } else {
+        // 遗漏占位符自动末尾追加兜底
+        compiled = `${compiled.trim()}\n\n${segmentsStr}`;
+      }
+
+      if (unreferencedConstraints.length > 0) {
+        compiled = `${unreferencedConstraints.join("\n\n")}\n\n${compiled.trim()}`;
+      }
+
+      return compiled.replace(/\n{3,}/g, "\n\n").trim();
+    }
+
     const promptObj = {
       targetLanguage: toLang,
       segments: texts.map((text, i) => ({ id: i, text })),
@@ -178,22 +360,83 @@ const genUserPrompt = ({
     return JSON.stringify(promptObj);
   }
 
-  const glossaryStr = Object.entries(glossary)
-    .map(([term, definition]) => `- ${term}: ${definition}`)
-    .join("\n");
+  const glossaryBlock = buildHyMtGlossaryBlock(glossary);
+  const toneBlock = buildHyMtToneBlock(tone);
+  const titleBlock = buildTitleBlock(title);
+  const descriptionBlock = buildDescriptionBlock(description);
+  const summaryBlock = buildSummaryBlock(summary);
+  const contextBlock = buildContextBlock(context);
 
-  return String(nobatchUserPrompt || "")
-    .replaceAll(INPUT_PLACE_TITLE, title)
-    .replaceAll(INPUT_PLACE_DESCRIPTION, description)
-    .replaceAll(INPUT_PLACE_SUMMARY, summary)
-    .replaceAll(INPUT_PLACE_CONTEXT, context)
-    .replaceAll(INPUT_PLACE_TONE, tone)
-    .replaceAll(INPUT_PLACE_GLOSSARY, glossaryStr)
+  // 单句翻译：仅在有效翻译模板（包含待翻译文本占位符）或默认模板中前置注入未引用的术语和语气
+  const unreferencedNobatchConstraints = [];
+  const nobatchStr = String(nobatchUserPrompt || "");
+  const isFullTranslatePrompt =
+    nobatchStr.includes(INPUT_PLACE_TEXT) || !nobatchUserPrompt;
+
+  if (isFullTranslatePrompt) {
+    if (
+      !nobatchStr.includes(INPUT_PLACE_GLOSSARY) &&
+      Object.keys(glossary).length > 0
+    ) {
+      unreferencedNobatchConstraints.push(glossaryBlock);
+    }
+    if (!nobatchStr.includes(INPUT_PLACE_TONE) && tone && String(tone).trim()) {
+      unreferencedNobatchConstraints.push(toneBlock);
+    }
+  }
+
+  let compiled = String(nobatchUserPrompt || "");
+
+  // 智能替换块级占位符（上下文各个独立字段、术语、语气）
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_TITLE,
+    titleBlock,
+    title
+  );
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_DESCRIPTION,
+    descriptionBlock,
+    description
+  );
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_SUMMARY,
+    summaryBlock,
+    summary
+  );
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_CONTEXT,
+    contextBlock,
+    context
+  );
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_GLOSSARY,
+    glossaryBlock,
+    glossaryStr
+  );
+  compiled = renderBlockPlaceholder(
+    compiled,
+    INPUT_PLACE_TONE,
+    toneBlock,
+    tone
+  );
+
+  compiled = compiled
     .replaceAll(INPUT_PLACE_FROM, from)
     .replaceAll(INPUT_PLACE_TO, to)
     .replaceAll(INPUT_PLACE_FROM_LANG, fromLang)
     .replaceAll(INPUT_PLACE_TO_LANG, toLang)
     .replaceAll(INPUT_PLACE_TEXT, texts[0]);
+
+  if (unreferencedNobatchConstraints.length > 0) {
+    compiled = `${unreferencedNobatchConstraints.join("\n\n")}\n\n${compiled.trim()}`;
+  }
+
+  return compiled.replace(/\n{3,}/g, "\n\n").trim();
 };
 
 // 统一生成最终字幕系统提示词；缓存签名与实际请求必须复用同一结果。
@@ -234,7 +477,7 @@ const buildSubtitleUserPrompt = ({ formattedEvents }) =>
  * @param {boolean} useBatchFetch 是否为批量翻译模式
  * @returns {Array<[string, string]>} 解析后的双元组列表 [译文, 源语言检测结果]
  */
-const parseAIRes = (raw, useBatchFetch = true) => {
+const parseAIRes = (raw, useBatchFetch = true, batchProtocol = "") => {
   if (!raw) {
     return [];
   }
@@ -254,14 +497,81 @@ const parseAIRes = (raw, useBatchFetch = true) => {
     decodeText: decodeHTMLEntities,
   });
   if (structuredSegments.length > 0) {
-    return structuredSegments.map((segment) => segment.translation);
+    return structuredSegments;
   }
 
-  // 兜底策略：纯文本按行切割解析
-  return content.split("\n").map((line) => {
+  // 若明确启用了现代聚合翻译协议（LINE/XML/JSON），必须解析出对应合法结构；
+  // 面对模型拒答、解释或普通文本时严禁按行伪造 ID，直接返回空数组以触发回退
+  if (
+    batchProtocol === PROMPT_PROTOCOL_LINE ||
+    batchProtocol === PROMPT_PROTOCOL_XML ||
+    batchProtocol === PROMPT_PROTOCOL_JSON
+  ) {
+    return [];
+  }
+
+  // 兜底策略：仅对未声明协议的旧配置/自定义提示词，保留纯文本按行切割解析（按行号注入 id）
+  return content.split("\n").map((line, i) => {
     const text = decodeHTMLEntities(line.replace(/<br\s*\/?>/gi, "\n").trim());
-    return [text, ""];
+    return { id: i, translation: [text, ""] };
   });
+};
+
+/**
+ * 校验并对齐批量翻译结果，防止漏段、重段、越界段导致的位移错位。
+ * 支持两种输入形态：
+ * 1. 结构化段落数组: [{ id: 0, translation: [text, src] }] 或 [{ id: 0, result: [text, src] }]
+ * 2. 传统位置索引数组: [[text, src], ...]
+ * @param {Array} items 解析出的翻译结果列表
+ * @param {number} totalCount 预期的总段落数 (texts.length)
+ * @returns {Array<{ id: number, result: [string, string] }>} 严格按合法 id 对齐的结果列表
+ */
+export const alignBatchTranslations = (items, totalCount) => {
+  if (!Array.isArray(items) || items.length === 0 || totalCount <= 0) {
+    return [];
+  }
+
+  const aligned = new Array(totalCount).fill(null);
+  const seenIds = new Set();
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item) continue;
+
+    let id;
+    let translation;
+
+    if (typeof item === "object" && !Array.isArray(item) && "id" in item) {
+      id = Number(item.id);
+      translation = item.translation || item.result;
+    } else if (Array.isArray(item)) {
+      id = i;
+      translation = item;
+    } else {
+      continue;
+    }
+
+    // 校验 ID 是否合法（必须是非负整数且在 [0, totalCount) 范围内）
+    if (!Number.isInteger(id) || id < 0 || id >= totalCount) {
+      continue; // 越界或非法 ID 予以丢弃，避免污染合法槽位
+    }
+
+    // 重复 ID 防御：仅保留首个到达的有效翻译
+    if (seenIds.has(id)) {
+      continue;
+    }
+
+    seenIds.add(id);
+    aligned[id] = translation;
+  }
+
+  const results = [];
+  for (let id = 0; id < totalCount; id++) {
+    if (aligned[id]) {
+      results.push({ id, result: aligned[id] });
+    }
+  }
+  return results;
 };
 
 /** 依据时间差计算旧版字幕输入使用的停顿等级。 */
@@ -819,6 +1129,16 @@ const genVolcengine = ({ texts, from, to }) => {
   return { url, body, headers };
 };
 
+const buildSystemRoleMessages = (systemPrompt) =>
+  systemPrompt?.trim()
+    ? [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+      ]
+    : [];
+
 const genOpenAI = ({
   url,
   key,
@@ -839,18 +1159,15 @@ const genOpenAI = ({
   };
   const body = {
     model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...hisMsgs,
-      userMsg,
-    ],
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
     temperature,
     max_completion_tokens: maxTokens,
     stream: useStream,
   };
+
+  // Astra 不支持 temperature，与是否显式设置思考强度无关。
+  // https://developers.openai.com/api/docs/guides/latest-model
+  if (isGPT6Astra(model)) delete body.temperature;
 
   applyThinkingParameters(body, {
     apiType,
@@ -1055,14 +1372,7 @@ const genGemini2 = ({
   };
   const body = {
     model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...hisMsgs,
-      userMsg,
-    ],
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
     temperature,
     max_tokens: maxTokens,
     stream: useStream,
@@ -1103,7 +1413,7 @@ const genClaude = ({
   };
   const body = {
     model,
-    system: systemPrompt,
+    ...(systemPrompt?.trim() ? { system: systemPrompt } : {}),
     messages: [...hisMsgs, userMsg],
     temperature,
     max_tokens: maxTokens,
@@ -1147,14 +1457,7 @@ const genOpenRouter = ({
   };
   const body = {
     model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...hisMsgs,
-      userMsg,
-    ],
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
     temperature,
     max_tokens: maxTokens,
     stream: useStream,
@@ -1197,18 +1500,14 @@ const genOrcaRouter = ({
   };
   const body = {
     model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...hisMsgs,
-      userMsg,
-    ],
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
     temperature,
     max_completion_tokens: maxTokens,
     stream: useStream,
   };
+
+  // 与 OpenAI 直连保持一致，Astra 不发送自动生成的温度参数。
+  if (isGPT6Astra(model)) delete body.temperature;
 
   applyThinkingParameters(body, {
     apiType: OPT_TRANS_ORCAROUTER,
@@ -1222,6 +1521,53 @@ const genOrcaRouter = ({
     "Content-type": "application/json",
     Authorization: `Bearer ${key}`,
     // 聚合网关的调用来源标识，便于在 OrcaRouter 控制台区分本扩展的用量
+    "HTTP-Referer": "https://fishjar.github.io/kiss-translator/",
+    "X-Title": "KISS Translator",
+  };
+
+  return { url, body, headers, userMsg };
+};
+
+const genRequesty = ({
+  url,
+  key,
+  systemPrompt,
+  userPrompt,
+  model,
+  temperature,
+  maxTokens,
+  hisMsgs = [],
+  useStream = false,
+  thinkingMode,
+  thinkingEffort,
+}) => {
+  const userMsg = {
+    role: "user",
+    content: userPrompt,
+  };
+  const body = {
+    model,
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
+    temperature,
+    max_completion_tokens: maxTokens,
+    stream: useStream,
+  };
+
+  // 与 OpenAI 直连保持一致，Astra 不发送自动生成的温度参数。
+  if (isGPT6Astra(model)) delete body.temperature;
+
+  applyThinkingParameters(body, {
+    apiType: OPT_TRANS_REQUESTY,
+    url,
+    model,
+    thinkingMode,
+    thinkingEffort,
+  });
+
+  const headers = {
+    "Content-type": "application/json",
+    Authorization: `Bearer ${key}`,
+    // 聚合网关的调用来源标识，便于在 Requesty 控制台区分本扩展的用量
     "HTTP-Referer": "https://fishjar.github.io/kiss-translator/",
     "X-Title": "KISS Translator",
   };
@@ -1248,14 +1594,7 @@ const genOllama = ({
   };
   const body = {
     model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...hisMsgs,
-      userMsg,
-    ],
+    messages: [...buildSystemRoleMessages(systemPrompt), ...hisMsgs, userMsg],
     temperature,
     max_tokens: maxTokens,
   };
@@ -1326,6 +1665,7 @@ const genReqFuncs = {
   [OPT_TRANS_ZAI]: genOpenAI,
   [OPT_TRANS_DEEPLX]: genDeeplX,
   [OPT_TRANS_EPHONEAI]: genOpenAI,
+  [OPT_TRANS_APIMART]: genOpenAI,
   [OPT_TRANS_BAIDU]: genBaidu,
   [OPT_TRANS_TENCENT]: genTencent,
   [OPT_TRANS_VOLCENGINE]: genVolcengine,
@@ -1337,6 +1677,7 @@ const genReqFuncs = {
   [OPT_TRANS_OLLAMA]: genOllama,
   [OPT_TRANS_OPENROUTER]: genOpenRouter,
   [OPT_TRANS_ORCAROUTER]: genOrcaRouter,
+  [OPT_TRANS_REQUESTY]: genRequesty,
   [OPT_TRANS_CUSTOMIZE]: genCustom,
 };
 
@@ -1392,6 +1733,8 @@ export const genTransReq = async ({ reqHook, ...args }) => {
     apiSlug,
     key,
     systemPrompt,
+    batchUserPrompt,
+    batchProtocol,
     subtitlePrompt,
     // userPrompt,
     nobatchPrompt = defaultNobatchPrompt,
@@ -1454,6 +1797,8 @@ export const genTransReq = async ({ reqHook, ...args }) => {
         })
       : genUserPrompt({
           nobatchUserPrompt,
+          batchUserPrompt,
+          batchProtocol,
           useBatchFetch,
           from,
           to,
@@ -1562,6 +1907,7 @@ export const parseTransRes = async (
     userMsg,
     apiType,
     useBatchFetch,
+    batchProtocol,
     textFormat = "text",
   }
 ) => {
@@ -1664,6 +2010,7 @@ export const parseTransRes = async (
       return typeof content === "string" ? [[content]] : [];
     }
     case OPT_TRANS_EPHONEAI:
+    case OPT_TRANS_APIMART:
     case OPT_TRANS_OPENAI:
     case OPT_TRANS_DEEPSEEK:
     case OPT_TRANS_OPENCODEGO:
@@ -1675,12 +2022,13 @@ export const parseTransRes = async (
     case OPT_TRANS_GEMINI_2:
     case OPT_TRANS_OPENROUTER:
     case OPT_TRANS_ORCAROUTER:
+    case OPT_TRANS_REQUESTY:
       modelMsg = res?.choices?.[0]?.message;
       if (history && userMsg) {
         // 成对写入与轮次截断守卫统一内聚在 addPair：空正文/非 assistant role 整对不写
         history.addPair(userMsg, modelMsg);
       }
-      return parseAIRes(modelMsg?.content, useBatchFetch);
+      return parseAIRes(modelMsg?.content, useBatchFetch, batchProtocol);
     case OPT_TRANS_GEMINI:
       // Gemini Interactions steps may include thought items.
       // Their context replay semantics are outside this history-correctness fix.
@@ -1694,7 +2042,7 @@ export const parseTransRes = async (
           history.add(userMsg, modelMsg);
         }
       }
-      return parseAIRes(geminiResponseText(res), useBatchFetch);
+      return parseAIRes(geminiResponseText(res), useBatchFetch, batchProtocol);
     case OPT_TRANS_CLAUDE: {
       // 历史上下文取值必须做形态归一化，原因有三：
       // 1. 形态防御：响应 content 存在多种形态 —— Anthropic 标准的块数组
@@ -1725,7 +2073,11 @@ export const parseTransRes = async (
       if (history && userMsg) {
         history.addPair(userMsg, modelMsg);
       }
-      return parseAIRes(res?.content?.[0]?.text ?? "", useBatchFetch);
+      return parseAIRes(
+        res?.content?.[0]?.text ?? "",
+        useBatchFetch,
+        batchProtocol
+      );
     }
     case OPT_TRANS_CLOUDFLAREAI:
       return [[res?.result?.translated_text]];
@@ -1742,7 +2094,7 @@ export const parseTransRes = async (
       if (history && userMsg) {
         history.addPair(userMsg, modelMsg);
       }
-      return parseAIRes(modelMsg?.content, useBatchFetch);
+      return parseAIRes(modelMsg?.content, useBatchFetch, batchProtocol);
     case OPT_TRANS_CUSTOMIZE:
       if (useBatchFetch) {
         return (res?.translations ?? res)?.map((item) => [item.text, item.src]);
@@ -1767,6 +2119,7 @@ export const parseTransRes = async (
 function parseDictRes(res, apiType) {
   switch (apiType) {
     case OPT_TRANS_EPHONEAI:
+    case OPT_TRANS_APIMART:
     case OPT_TRANS_OPENAI:
     case OPT_TRANS_DEEPSEEK:
     case OPT_TRANS_OPENCODEGO:
@@ -1778,6 +2131,7 @@ function parseDictRes(res, apiType) {
     case OPT_TRANS_GEMINI_2:
     case OPT_TRANS_OPENROUTER:
     case OPT_TRANS_ORCAROUTER:
+    case OPT_TRANS_REQUESTY:
     case OPT_TRANS_OLLAMA:
       return res?.choices?.[0]?.message?.content || "";
     case OPT_TRANS_GEMINI:
@@ -1844,9 +2198,10 @@ export const handleDict = async ({
     throw new Error("AI dictionary prompt is empty.");
   }
 
-  // 词典请求本质上是单条文本解析，强制关闭批量模式，避免进入批量 JSON 解析分支。
+  // 词典请求本质上是单条文本解析，强制关闭批量模式与翻译语气注入。
   const requestApiSetting = {
     ...apiSetting,
+    tone: "",
     useBatchFetch: false,
     useStream: enableStream,
     nobatchPrompt: dictPrompt,
@@ -1986,6 +2341,7 @@ export async function* handleTranslate(
     docInfo,
     textFormat = "text",
     signal,
+    capture,
   }
 ) {
   if (signal?.aborted) return;
@@ -2044,6 +2400,7 @@ export async function* handleTranslate(
     if (!response) {
       throw new Error("translate got empty response");
     }
+    capture?.onResponse?.(response);
 
     const result = await parseTransRes(response, {
       texts,
@@ -2061,27 +2418,41 @@ export async function* handleTranslate(
       throw new Error("translate got an unexpected result");
     }
 
-    for (let i = 0; i < result.length; i++) {
-      yield { id: i, result: result[i] };
+    const aligned = alignBatchTranslations(result, texts.length);
+    for (const chunk of aligned) {
+      yield chunk;
     }
   };
 
   const [input, init, userMsg] = await getRequest(enableStream);
+  capture?.onRequest?.(input, init, userMsg);
 
   if (enableStream) {
+    const yieldedIds = new Set();
     try {
-      yield* handleTranslateStreamInternal(texts, input, init, {
-        apiType,
-        history,
-        userMsg,
-        useBatchFetch: apiSetting.useBatchFetch,
-        usePool,
-        fetchInterval,
-        fetchLimit,
-        httpTimeout,
-        signal,
-        streamRenderMode: apiSetting.streamRenderMode || "disabled",
-      });
+      for await (const chunk of handleTranslateStreamInternal(
+        texts,
+        input,
+        init,
+        {
+          apiType,
+          history,
+          userMsg,
+          useBatchFetch: apiSetting.useBatchFetch,
+          batchProtocol: apiSetting.batchProtocol,
+          usePool,
+          fetchInterval,
+          fetchLimit,
+          httpTimeout,
+          signal,
+          streamRenderMode: apiSetting.streamRenderMode || "disabled",
+        }
+      )) {
+        if (chunk?.result && chunk.id !== undefined) {
+          yieldedIds.add(chunk.id);
+        }
+        yield chunk;
+      }
       return;
     } catch (err) {
       if (err?.name === "AbortError") {
@@ -2092,7 +2463,16 @@ export async function* handleTranslate(
 
     const [fallbackInput, fallbackInit, fallbackUserMsg] =
       await getRequest(false);
-    yield* runNonStream(fallbackInput, fallbackInit, fallbackUserMsg);
+    for await (const chunk of runNonStream(
+      fallbackInput,
+      fallbackInit,
+      fallbackUserMsg
+    )) {
+      if (chunk?.id !== undefined && yieldedIds.has(chunk.id)) {
+        continue;
+      }
+      yield chunk;
+    }
     return;
   }
 
@@ -2111,6 +2491,7 @@ async function* handleTranslateStreamInternal(
     history,
     userMsg,
     useBatchFetch,
+    batchProtocol,
     usePool,
     fetchInterval,
     fetchLimit,
@@ -2208,16 +2589,53 @@ async function* handleTranslateStreamInternal(
     throw error;
   }
 
-  // 最终再解析一次，捕获可能遗漏的段落
+  // 最终再解析一次，捕获可能遗漏的段落（严格按真实 ID 寻址，防止错位）
   const hasEmpty = results.some((r) => !r);
+  const newlyYieldable = [];
   if (hasEmpty) {
-    const parsed = parseAIRes(fullContent, useBatchFetch);
-    for (let i = 0; i < texts.length && i < parsed.length; i++) {
-      if (!results[i]) {
-        results[i] = parsed[i];
-        yield { id: i, result: results[i] };
+    const parsed = parseAIRes(fullContent, useBatchFetch, batchProtocol);
+    for (let i = 0; i < parsed.length; i++) {
+      const item = parsed[i];
+      let id;
+      let translation;
+      if (typeof item === "object" && !Array.isArray(item) && "id" in item) {
+        id = Number(item.id);
+        translation = item.translation || item.result;
+      } else if (Array.isArray(item)) {
+        id = i;
+        translation = item;
+      }
+      if (
+        typeof id === "number" &&
+        Number.isInteger(id) &&
+        id >= 0 &&
+        id < texts.length &&
+        !results[id] &&
+        translation
+      ) {
+        results[id] = translation;
+        newlyYieldable.push({ id, result: results[id] });
       }
     }
+  }
+
+  // 仅在聚合批量翻译（useBatchFetch === true）时，检查是否存在小模型遗漏的 ID
+  // 若有缺失段落，在 yield 任何最终补偿结果前直接抛出异常，触发外层回退到非流式重试并补齐
+  if (useBatchFetch) {
+    const stillMissing = results.some((r) => !r);
+    if (stillMissing) {
+      const missingIds = results
+        .map((r, i) => (r ? null : i))
+        .filter((i) => i !== null);
+      throw new Error(
+        `Stream translation incomplete, missing ids: [${missingIds.join(", ")}]`
+      );
+    }
+  }
+
+  // 完整性校验通过后，才安全发出最终补充的段落
+  for (const item of newlyYieldable) {
+    yield item;
   }
 
   if (history && userMsg) {
@@ -2322,6 +2740,7 @@ export const handleSubtitle = async ({
 
   switch (apiType) {
     case OPT_TRANS_EPHONEAI:
+    case OPT_TRANS_APIMART:
     case OPT_TRANS_OPENAI:
     case OPT_TRANS_DEEPSEEK:
     case OPT_TRANS_OPENCODEGO:
@@ -2333,6 +2752,7 @@ export const handleSubtitle = async ({
     case OPT_TRANS_GEMINI_2:
     case OPT_TRANS_OPENROUTER:
     case OPT_TRANS_ORCAROUTER:
+    case OPT_TRANS_REQUESTY:
     case OPT_TRANS_OLLAMA:
       return parseSTRes(
         res?.choices?.[0]?.message?.content ?? "",
@@ -2539,6 +2959,7 @@ export const handleSummarize = async ({
 
   switch (apiType) {
     case OPT_TRANS_EPHONEAI:
+    case OPT_TRANS_APIMART:
     case OPT_TRANS_OPENAI:
     case OPT_TRANS_DEEPSEEK:
     case OPT_TRANS_OPENCODEGO:
@@ -2550,6 +2971,7 @@ export const handleSummarize = async ({
     case OPT_TRANS_GEMINI_2:
     case OPT_TRANS_OPENROUTER:
     case OPT_TRANS_ORCAROUTER:
+    case OPT_TRANS_REQUESTY:
     case OPT_TRANS_OLLAMA:
       return res?.choices?.[0]?.message?.content?.trim() || "";
     case OPT_TRANS_GEMINI:
