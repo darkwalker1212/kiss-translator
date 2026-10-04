@@ -15,6 +15,7 @@ import {
   OPT_HIGHLIGHT_WORDS_BEFORETRANS,
   OPT_HIGHLIGHT_WORDS_AFTERTRANS,
   OPT_MOUSE_HOVER_DISPLAY_BUBBLE,
+  OPT_MOUSE_HOVER_HOLD_BUTTON_RIGHT,
   OPT_MOUSE_HOVER_TRANS_AREA,
   OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
   OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE,
@@ -383,7 +384,7 @@ export class Translator {
 
   #removeKeydownHandler; // 快捷键清理函数
   #removeKeydownHandler2; // 备用快捷键清理函数
-  #removeMouseHoldHandlers; // 按住鼠标左键触发方式的清理函数
+  #removeMouseHoldHandlers; // 按住鼠标按键触发方式的清理函数
   #touchController = null;
   #touchPending = new Map();
   #touchCandidates = new Set();
@@ -477,18 +478,22 @@ export class Translator {
     return true;
   }
 
-  #mouseHoldTimer = null; // 按住左键等待触发翻译的定时器
-  #mouseHoldActive = false; // 是否处于按住左键状态
+  #mouseHoldTimer = null; // 按住按键等待触发翻译的定时器
+  #mouseHoldActive = false; // 是否处于按住状态
   #mouseHoldTriggered = false; // 本次按住是否已经触发过翻译
-  #mouseHoldStartX = 0; // 按住左键时的起始 X 坐标
-  #mouseHoldStartY = 0; // 按住左键时的起始 Y 坐标
-  #mouseHoldDownTarget = null; // 按住左键按下时的事件目标（坐标定位失败时兜底）
-  #boundMouseDownHandler = null; // 鼠标左键按下事件
-  #boundMouseUpHandler = null; // 鼠标左键松开事件
+  #mouseHoldArmedButton = null; // 本次按住所用的鼠标按键（0 左键 / 2 右键），未按住时为 null
+  #mouseHoldStartX = 0; // 按住时的起始 X 坐标
+  #mouseHoldStartY = 0; // 按住时的起始 Y 坐标
+  #mouseHoldDownTarget = null; // 按住按下时的事件目标（坐标定位失败时兜底）
+  #boundMouseDownHandler = null; // 鼠标按键按下事件
+  #boundMouseUpHandler = null; // 鼠标按键松开事件
   #boundMouseHoldMoveHandler = null; // 按住期间移动取消事件
   #boundMouseHoldClickHandler = null; // 按住翻译后拦截点击的事件
+  #boundMouseHoldContextMenuHandler = null; // 右键按住的右键菜单事件
   #boundCancelMouseHold = null; // 取消按住状态的绑定函数
   #mouseHoldSuppressClick = false; // 本次按住翻译成功后是否阻止松开时的点击
+  #mouseHoldSuppressContextMenu = false; // 本次右键按住翻译成功后是否屏蔽原生右键菜单
+  #mouseHoldSuppressMenuToken = 0; // 菜单屏蔽标记的代次，防止过期兜底定时器清掉新一轮的标记
   #mouseHoldPreventClickEnabled = false; // 本次按住是否启用“阻止点击跳转”
   #mouseHoldInteractive = false; // 按住起点是否位于链接/按钮等可交互元素上
   #holdRequestConcurrency = 0; // 按住触发翻译的在途 API 请求数
@@ -1531,7 +1536,7 @@ export class Translator {
     this.#handleKeyDown();
   }
 
-  // 获取按住左键触发翻译需要等待的毫秒数
+  // 获取按住按键触发翻译需要等待的毫秒数
   #getMouseHoldDelay() {
     const delay = Number(this.#setting.mouseHoverSetting?.mouseHoverHoldDelay);
     return Number.isFinite(delay) && delay > 0
@@ -1539,7 +1544,7 @@ export class Translator {
       : DEFAULT_MOUSE_HOVER_HOLD_DELAY;
   }
 
-  // 按住左键译文是否独立成块显示（默认独立成块，便于长文对照阅读）
+  // 按住按键译文是否独立成块显示（默认独立成块，便于长文对照阅读）
   #getMouseHoldBlockDisplay() {
     const display =
       this.#setting.mouseHoverSetting?.mouseHoverTransDisplay ||
@@ -1547,7 +1552,7 @@ export class Translator {
     return display !== OPT_MOUSE_HOVER_TRANS_DISPLAY_INLINE;
   }
 
-  // 纯触屏设备（无任何支持悬停的指针输入）上“按住鼠标左键”没有对应语义，
+  // 纯触屏设备（无任何支持悬停的指针输入）上“按住鼠标按键”没有对应语义，
   // 长按会触发系统菜单/选词，容易误触发翻译，因此不注册按住监听。
   // 使用 any-hover：触屏为主但外接鼠标/触控板的混合设备仍应启用。
   // matchMedia 不可用或抛错时（极旧环境）默认启用。
@@ -1562,7 +1567,7 @@ export class Translator {
     }
   }
 
-  // 注册“按住鼠标左键不放”触发翻译/还原的监听
+  // 注册“按住鼠标按键不放”触发翻译/还原的监听
   #registerMouseHoldHandler() {
     if (this.#removeMouseHoldHandlers) return;
 
@@ -1572,6 +1577,8 @@ export class Translator {
       this.#handleMouseHoldMove(event);
     this.#boundMouseHoldClickHandler = (event) =>
       this.#handleMouseHoldClick(event);
+    this.#boundMouseHoldContextMenuHandler = (event) =>
+      this.#handleMouseHoldContextMenu(event);
     this.#boundCancelMouseHold = () => this.#cancelMouseHold();
 
     document.addEventListener("mousedown", this.#boundMouseDownHandler, true);
@@ -1589,8 +1596,12 @@ export class Translator {
       this.#boundCancelMouseHold,
       true
     );
-    // 按住期间弹出右键/移动端长按菜单时取消
-    document.addEventListener("contextmenu", this.#boundCancelMouseHold, true);
+    // 右键菜单：左键模式下弹出菜单即取消按住；右键模式下需保留按住并按选项决定是否屏蔽菜单
+    document.addEventListener(
+      "contextmenu",
+      this.#boundMouseHoldContextMenuHandler,
+      true
+    );
 
     this.#removeMouseHoldHandlers = () => {
       document.removeEventListener(
@@ -1621,18 +1632,49 @@ export class Translator {
       );
       document.removeEventListener(
         "contextmenu",
-        this.#boundCancelMouseHold,
+        this.#boundMouseHoldContextMenuHandler,
         true
       );
       this.#removeMouseHoldHandlers = null;
       this.#boundCancelMouseHold = null;
+      this.#boundMouseHoldContextMenuHandler = null;
     };
   }
 
-  // 鼠标左键按下：等待设定的延迟后触发翻译/还原
+  // 当前配置的按住触发按键（0 = 鼠标左键，2 = 鼠标右键）
+  #getMouseHoldButton() {
+    return this.#setting.mouseHoverSetting?.mouseHoverHoldButton ===
+      OPT_MOUSE_HOVER_HOLD_BUTTON_RIGHT
+      ? 2
+      : 0;
+  }
+
+  // 右键模式下按住翻译成功后是否屏蔽原生右键菜单
+  // 键缺失（旧版本升级上来的设置）时沿用默认值 true，与设置界面显示保持一致
+  #shouldSuppressContextMenu() {
+    const value =
+      this.#setting.mouseHoverSetting?.mouseHoverSuppressContextMenu;
+    return value === undefined ? true : Boolean(value);
+  }
+
+  // 屏蔽原生右键菜单
+  #blockContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
+  // 鼠标按键按下：等待设定的延迟后触发翻译/还原
   #handleMouseHoldDown(event) {
-    if (event.button !== 0) return;
-    const target = event.target;
+    if (event.button !== this.#getMouseHoldButton()) return;
+    // Shadow DOM 内的按下会被重定向为宿主元素，这里取合成路径上的真实目标，
+    // 否则 Shadow DOM 里的输入框/可编辑区域无法被下面的排除规则识别
+    const path = event.composedPath?.();
+    const deepTarget = path?.length ? path[0] : event.target;
+    const target =
+      deepTarget?.nodeType === Node.ELEMENT_NODE
+        ? deepTarget
+        : deepTarget?.parentElement || event.target;
     if (
       target?.closest?.(
         "input, textarea, select, [contenteditable='true'], [contenteditable='']"
@@ -1644,7 +1686,12 @@ export class Translator {
     this.#cancelMouseHold();
     this.#mouseHoldActive = true;
     this.#mouseHoldTriggered = false;
+    // 记录本次按住所用的按键：按住期间切换左键/右键模式时，
+    // 松开事件仍按本次按下的按键来匹配，避免状态残留
+    this.#mouseHoldArmedButton = event.button;
     this.#mouseHoldSuppressClick = false;
+    // 新的一次按下开始，上一轮残留的右键菜单屏蔽标志作废
+    this.#mouseHoldSuppressContextMenu = false;
     this.#mouseHoldPreventClickEnabled = Boolean(
       this.#setting.mouseHoverSetting?.mouseHoverPreventClick
     );
@@ -1668,22 +1715,60 @@ export class Translator {
       const accepted = this.#handleMouseHoldToggle(generation);
       if (accepted) {
         this.#holdGeneration = generation;
-      }
-      // 只有实际接受（翻译或还原）了目标时才启用点击抑制：
-      // 被规则排除或未命中任何目标的按住不应吞掉后续的导航/按钮点击
-      if (
-        accepted &&
-        this.#mouseHoldPreventClickEnabled &&
-        this.#mouseHoldInteractive
-      ) {
-        this.#mouseHoldSuppressClick = true;
+        if (this.#mouseHoldArmedButton === 2) {
+          // 右键模式：翻译成功后屏蔽这次松开时的原生右键菜单，
+          // 避免菜单盖住译文（关闭该选项时保留原生菜单）
+          if (this.#shouldSuppressContextMenu()) {
+            this.#mouseHoldSuppressContextMenu = true;
+            this.#mouseHoldSuppressMenuToken += 1;
+          }
+        } else if (
+          // 左键模式：只有实际接受（翻译或还原）了目标时才启用点击抑制：
+          // 被规则排除或未命中任何目标的按住不应吞掉后续的导航/按钮点击
+          this.#mouseHoldPreventClickEnabled &&
+          this.#mouseHoldInteractive
+        ) {
+          this.#mouseHoldSuppressClick = true;
+        }
       }
     }, this.#getMouseHoldDelay());
   }
 
-  // 鼠标左键松开：取消本次按住状态
+  // 鼠标按键松开：取消本次按住状态
   #handleMouseHoldUp(event) {
-    if (event.button !== 0) return;
+    // 按住期间可能切换了左键/右键模式，本次按下的按键与当前配置的按键
+    // 任一匹配都结束按住状态，避免 mouseup 被漏掉后状态长期残留
+    if (
+      event.button !== this.#mouseHoldArmedButton &&
+      event.button !== this.#getMouseHoldButton()
+    ) {
+      return;
+    }
+    this.#cancelMouseHold();
+  }
+
+  // 右键菜单事件：
+  // - 左键模式：按住期间弹出菜单即取消按住（原有行为）
+  // - 右键模式：短按右键保留原生菜单；按住翻译成功的那一次屏蔽菜单
+  #handleMouseHoldContextMenu(event) {
+    // 本次右键按住已经触发过翻译：屏蔽菜单并消费标志
+    if (this.#mouseHoldSuppressContextMenu) {
+      this.#mouseHoldSuppressContextMenu = false;
+      this.#blockContextMenu(event);
+      return;
+    }
+    // 右键按住的按住状态仍然有效（部分平台在按下瞬间就触发 contextmenu）
+    if (this.#mouseHoldActive && this.#mouseHoldArmedButton === 2) {
+      if (this.#shouldSuppressContextMenu()) {
+        // 屏蔽菜单但保留按住状态，让翻译仍能触发
+        this.#blockContextMenu(event);
+      } else {
+        // 保留原生菜单：菜单接管了这次右键，结束尚未完成的按住，
+        // 否则菜单打开后（该平台不再派发 mouseup）仍会弹出译文
+        this.#cancelMouseHold();
+      }
+      return;
+    }
     this.#cancelMouseHold();
   }
 
@@ -1705,10 +1790,11 @@ export class Translator {
     event.stopImmediatePropagation?.();
   }
 
-  // 取消按住左键触发的等待状态
+  // 取消按住触发的等待状态
   #cancelMouseHold() {
     this.#mouseHoldActive = false;
     this.#mouseHoldTriggered = false;
+    this.#mouseHoldArmedButton = null;
     this.#mouseHoldPreventClickEnabled = false;
     this.#mouseHoldInteractive = false;
     this.#mouseHoldDownTarget = null;
@@ -1719,13 +1805,24 @@ export class Translator {
         this.#mouseHoldSuppressClick = false;
       }, 0);
     }
+    if (this.#mouseHoldSuppressContextMenu) {
+      // 右键菜单在 mouseup 之后紧接着触发（部分平台在按下时触发），
+      // 这里延迟兜底清理，避免上下文被中断时标志残留。
+      // 带上代次判断：清理期间如果又完成了一次右键按住，不能把新标记清掉。
+      const token = this.#mouseHoldSuppressMenuToken;
+      setTimeout(() => {
+        if (this.#mouseHoldSuppressMenuToken === token) {
+          this.#mouseHoldSuppressContextMenu = false;
+        }
+      }, 500);
+    }
     if (this.#mouseHoldTimer) {
       clearTimeout(this.#mouseHoldTimer);
       this.#mouseHoldTimer = null;
     }
   }
 
-  // 按住左键到点后执行：优先翻译/还原光标所在的整块文字区域
+  // 按住按键到点后执行：优先翻译/还原光标所在的整块文字区域
   #handleMouseHoldToggle(generation) {
     if (!this.#isInitialized) {
       this.#init();
@@ -1856,7 +1953,7 @@ export class Translator {
 
   // 查找可作为独立翻译目标的链接/按钮等可交互文字元素。
   // 按钮、链接、summary 等元素即使不在常规扫描范围内，
-  // 也允许通过按住左键单独翻译，便于处理图标旁文字、按钮文案等短文本。
+  // 也允许通过按住按键单独翻译，便于处理图标旁文字、按钮文案等短文本。
   #findAtomicHoldTarget(node) {
     let current = node;
     while (current && current !== document.body) {
@@ -1970,7 +2067,7 @@ export class Translator {
     }
   }
 
-  // 按住左键翻译的目标是否允许翻译（遵循个人/订阅/全局规则设置）
+  // 按住翻译的目标是否允许翻译（遵循个人/订阅/全局规则设置）
   #isHoldTargetAllowed(node) {
     if (!node) return false;
     if (node.closest?.(this.#ignoreSelector)) return false;

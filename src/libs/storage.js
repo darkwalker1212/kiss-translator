@@ -21,6 +21,7 @@ import {
   SETTINGS_VERSION_V2,
   CURRENT_SETTINGS_VERSION,
   DEFAULT_TRANBOX_SETTING,
+  DEFAULT_MOUSE_HOVER_SETTING,
   normalizeApiThinkingSettings,
   KV_SETTING_KEY,
   KV_RULES_KEY,
@@ -522,6 +523,13 @@ const mergeSettingWithDefault = (setting) => {
     tranboxSetting: {
       ...DEFAULT_TRANBOX_SETTING,
       ...(setting?.tranboxSetting || {}),
+    },
+    // 悬停/按住翻译的子设置同样补齐默认值：旧版本升级上来的设置缺少
+    // 新增键（如按住触发按键、屏蔽右键菜单）时，运行时与设置界面必须
+    // 得到同一个默认值，否则会出现开关显示与实际行为不一致。
+    mouseHoverSetting: {
+      ...DEFAULT_MOUSE_HOVER_SETTING,
+      ...(setting?.mouseHoverSetting || {}),
     },
     version: setting?.version ?? DEFAULT_SETTING.version,
   };

@@ -3415,6 +3415,620 @@ describe("Translator rule styles", () => {
     ).toHaveLength(0);
   });
 
+  test("translates on a long right-button press in right-button mode", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("ignores left-button presses in right-button mode", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(500);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 0 })
+    );
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("keeps the native menu for a short right click", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 未到按住延迟就松开：属于普通单击右键
+    jest.advanceTimersByTime(100);
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+
+    expect(menu.defaultPrevented).toBe(false);
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("suppresses the native menu after a successful right-button hold", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+
+    expect(menu.defaultPrevented).toBe(true);
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("keeps the native menu when context-menu suppression is disabled", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: false,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+
+    expect(menu.defaultPrevented).toBe(false);
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("keeps tracking the right-button hold when the menu fires while pressing", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 模拟在按下瞬间就触发 contextmenu 的平台：菜单被屏蔽且按住继续跟踪
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(true);
+
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("does not suppress a later left click in right-button mode", async () => {
+    document.body.innerHTML =
+      '<main id="root"><a id="link" href="#">Link text</a></main>';
+    const link = document.getElementById("link");
+    document.elementFromPoint = () => link;
+
+    createTranslator(
+      { transOpen: "false", rootsSelector: "body" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverPreventClick: true,
+        },
+      }
+    );
+
+    await hoverNode(link, 20, 20);
+    link.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+    document.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+      })
+    );
+
+    // 右键模式不使用“阻止点击跳转”，随后的左键点击不应被拦截
+    const click = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    });
+    link.dispatchEvent(click);
+
+    expect(
+      document.querySelector(`#link .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+    expect(click.defaultPrevented).toBe(false);
+  });
+
+  test("suppresses the native menu by default when the setting key is missing", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          // 旧版本升级上来的设置没有 mouseHoverSuppressContextMenu 键：
+          // 默认值应为开启，与设置界面的开关显示保持一致
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+
+    expect(menu.defaultPrevented).toBe(true);
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("keeps the native menu for a right press inside a shadow DOM input", async () => {
+    document.body.innerHTML = '<main id="root"><div id="host"></div></main>';
+    const host = document.getElementById("host");
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<input id="field" value="shadow field" />';
+    const field = shadow.getElementById("field");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    // 事件从 Shadow DOM 内派发时，document 上看到的目标是宿主元素，
+    // 因此必须用 composedPath 识别出真正的输入框
+    field.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        composed: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(400);
+    await flushAsync();
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      button: 2,
+    });
+    field.dispatchEvent(menu);
+
+    expect(menu.defaultPrevented).toBe(false);
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("drops the pending right-button hold when the native menu is allowed", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: false,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 模拟在按下瞬间弹出原生菜单的平台（macOS/Linux）：菜单接管这次右键，
+    // 且此后不会再派发 mouseup，因此不能继续按住触发翻译
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(false);
+
+    jest.advanceTimersByTime(400);
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("ends the hold when the trigger button changes during the press", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    const translator = createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 按住期间设置被改成左键模式（设置界面/同步写入后内容脚本实时生效）：
+    // 松开右键仍应结束本次按住，不能再触发翻译
+    translator.setting.mouseHoverSetting.mouseHoverHoldButton = "left";
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    jest.advanceTimersByTime(400);
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("keeps a later right-button menu suppressed when an earlier fallback cleanup is pending", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="a">First target</p><p id="b">Second target</p></main>';
+    const first = document.getElementById("a");
+    const second = document.getElementById("b");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    // 第一次按住：翻译成功后松开，但先不派发 contextmenu
+    await hoverNode(first, 20, 20);
+    first.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    // 500ms 兜底清理尚未触发时开始第二次按住并翻译成功
+    jest.advanceTimersByTime(50);
+    await hoverNode(second, 20, 20);
+    second.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(200);
+    await flushAsync();
+    jest.advanceTimersByTime(400);
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    second.dispatchEvent(menu);
+
+    // 过期的兜底清理不得清掉第二次按住设置的屏蔽标记
+    expect(menu.defaultPrevented).toBe(true);
+    expect(
+      document.querySelector(`#b .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
   test("does not register hold handlers on touch-only devices", async () => {
     window.matchMedia.mockImplementation((query) => ({
       matches: query !== "(any-hover: hover)",
