@@ -4029,6 +4029,333 @@ describe("Translator rule styles", () => {
     ).not.toBeNull();
   });
 
+  test("keeps the translation on a press-time-menu platform without a mouseup", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverSuppressContextMenu: true,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 模拟 macOS/Linux“按下瞬间就弹菜单”：此时屏蔽菜单，按住继续跟踪
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    target.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(true);
+
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+
+    // 该平台之后可能不派发 mouseup：随后的 buttons=0 移动属于已知平台行为，
+    // 不能被当成“浏览器手势接管”而把刚生成的译文撤回
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("reverts the right-button hold translation when the browser takes over the press", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+
+    // 浏览器（如 Edge 内置鼠标手势）接管了这次按住：没有 mouseup，
+    // 页面只能在随后的 mousemove 里通过 buttons 得知按键其实已经松开
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).toBeNull();
+  });
+
+  test("keeps the translation when the gesture revert option is disabled", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverHoldRevertOnGesture: false,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("does not revert while the right button is still reported as held", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    // 右键仍按下时的移动不应撤回译文（也不能误判成手势接管）
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 2,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("does not revert a left-button hold when a move reports no buttons", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Left button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("puts the translation back when the taken-over hold had restored it", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    const pressRight = () =>
+      target.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 2,
+          clientX: 20,
+          clientY: 20,
+        })
+      );
+    const wrapper = () =>
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`);
+
+    // 第一次按住：翻译
+    await hoverNode(target, 20, 20);
+    pressRight();
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    expect(wrapper()).not.toBeNull();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, button: 2 })
+    );
+
+    // 第二次按住：还原（本次按住的改动是把译文移除）
+    pressRight();
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    expect(wrapper()).toBeNull();
+
+    // 被浏览器手势接管：撤回 = 把译文放回去
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 80,
+        clientY: 80,
+      })
+    );
+    await flushAsync();
+
+    expect(wrapper()).not.toBeNull();
+  });
+
   test("does not register hold handlers on touch-only devices", async () => {
     window.matchMedia.mockImplementation((query) => ({
       matches: query !== "(any-hover: hover)",

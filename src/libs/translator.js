@@ -496,6 +496,8 @@ export class Translator {
   #mouseHoldSuppressMenuToken = 0; // 菜单屏蔽标记的代次，防止过期兜底定时器清掉新一轮的标记
   #mouseHoldPreventClickEnabled = false; // 本次按住是否启用“阻止点击跳转”
   #mouseHoldInteractive = false; // 按住起点是否位于链接/按钮等可交互元素上
+  #mouseHoldRevertContext = null; // 本次按住实际切换了什么（用于被浏览器手势接管后反向撤回）
+  #mouseHoldMenuFiredWhilePressing = false; // 本次按住期间是否已经弹过原生菜单（按下即弹菜单的平台）
   #holdRequestConcurrency = 0; // 按住触发翻译的在途 API 请求数
   #holdRequestWaiters = []; // 等待并发名额的翻译请求
   #holdRequestLimit = 5; // 按住触发翻译的最大并发请求数
@@ -1657,11 +1659,88 @@ export class Translator {
     return value === undefined ? true : Boolean(value);
   }
 
+  // 右键模式下按住被浏览器手势接管（如 Edge 内置鼠标手势）时是否撤回译文
+  // 键缺失（旧版本升级上来的设置）时沿用默认值 true，与设置界面显示保持一致
+  #shouldRevertOnGesture() {
+    const value =
+      this.#setting.mouseHoverSetting?.mouseHoverHoldRevertOnGesture;
+    return value === undefined ? true : Boolean(value);
+  }
+
   // 屏蔽原生右键菜单
   #blockContextMenu(event) {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
+  }
+
+  // 目标范围内是否已有译文容器（用于判断本次按住是翻译还是还原）
+  #hasHoldTranslation(root) {
+    if (!Translator.isElement(root)) return false;
+    const selector = `.${Translator.KISS_CLASS.warpper}`;
+    if (root.classList?.contains(Translator.KISS_CLASS.warpper)) return true;
+    return Boolean(root.querySelector?.(selector));
+  }
+
+  // 记住本次按住实际切换了什么，供被浏览器手势接管后反向撤回
+  #rememberMouseHoldRevert(kind, target, blockDisplay) {
+    this.#mouseHoldRevertContext = {
+      kind,
+      target,
+      blockDisplay,
+      // 切换后目标范围内已有译文 = 本次是“翻译”，反之是“还原”
+      action: this.#hasHoldTranslation(target) ? "translate" : "restore",
+    };
+  }
+
+  // 反向撤回本次按住的改动：翻译过就还原，还原过就重新翻译
+  #revertMouseHoldTranslation() {
+    const context = this.#mouseHoldRevertContext;
+    this.#mouseHoldRevertContext = null;
+    if (!context) return;
+    const generation = this.#holdGeneration + 1;
+    try {
+      if (context.kind === "bubble") {
+        this.#hideHoverBubble();
+        return;
+      }
+      if (context.action === "translate") {
+        // 本次插入了译文：移除它（区域整块还原，单元只清理自身）
+        if (context.kind === "area") {
+          this.#restoreHoverBlock(context.target);
+        } else {
+          this.#cleanupDirectTranslations(context.target);
+        }
+        return;
+      }
+      // 本次是还原：把译文放回去
+      if (context.kind === "area") {
+        this.#toggleHoverBlock(context.target, generation);
+      } else {
+        this.#toggleTargetNode(
+          context.target,
+          true,
+          context.blockDisplay,
+          generation
+        );
+      }
+    } catch (err) {
+      kissLog("mouse hold revert", err);
+    }
+  }
+
+  // 这次按住被浏览器接管了（松开事件不会派发，页面只能从事后的 mousemove
+  // 里通过 buttons 得知按键已松开）：撤回译文并结束按住状态
+  #handleMouseHoldTakeover() {
+    if (this.#shouldRevertOnGesture()) {
+      this.#revertMouseHoldTranslation();
+    } else {
+      this.#mouseHoldRevertContext = null;
+    }
+    // 译文已撤回，没有理由再屏蔽随后的右键菜单
+    this.#mouseHoldSuppressContextMenu = false;
+    this.#mouseHoldSuppressMenuToken += 1;
+    this.#cancelMouseHold();
   }
 
   // 鼠标按键按下：等待设定的延迟后触发翻译/还原
@@ -1701,6 +1780,9 @@ export class Translator {
     this.#mouseHoldStartX = event.clientX;
     this.#mouseHoldStartY = event.clientY;
     this.#mouseHoldDownTarget = target;
+    // 新的一次按下开始，上一轮用于撤回的上下文作废
+    this.#mouseHoldRevertContext = null;
+    this.#mouseHoldMenuFiredWhilePressing = false;
 
     this.#mouseHoldTimer = setTimeout(() => {
       this.#mouseHoldTimer = null;
@@ -1760,7 +1842,12 @@ export class Translator {
     // 右键按住的按住状态仍然有效（部分平台在按下瞬间就触发 contextmenu）
     if (this.#mouseHoldActive && this.#mouseHoldArmedButton === 2) {
       if (this.#shouldSuppressContextMenu()) {
-        // 屏蔽菜单但保留按住状态，让翻译仍能触发
+        // 屏蔽菜单但保留按住状态，让翻译仍能触发。
+        // 翻译尚未触发就弹菜单 = 该平台“按下即弹菜单”（macOS/Linux），
+        // 记下来：这类按住本来就不会有 mouseup，不能当成手势接管而撤回译文
+        if (!this.#mouseHoldTriggered) {
+          this.#mouseHoldMenuFiredWhilePressing = true;
+        }
         this.#blockContextMenu(event);
       } else {
         // 保留原生菜单：菜单接管了这次右键，结束尚未完成的按住，
@@ -1774,7 +1861,21 @@ export class Translator {
 
   // 按住期间鼠标明显移动（拖选/拖动）时取消触发
   #handleMouseHoldMove(event) {
-    if (!this.#mouseHoldActive || this.#mouseHoldTriggered) return;
+    if (!this.#mouseHoldActive) return;
+    // 右键模式下浏览器接管了这次按住（Edge 内置手势等）：松开事件不会派发，
+    // 页面只能在随后的 mousemove 里通过 buttons 得知按键其实已经松开。
+    // “按下即弹菜单”的平台（macOS/Linux）本来就不会派发 mouseup，属于已知
+    // 平台行为而非接管，因此那种按住不做撤回（由 #mouseHoldMenuFiredWhilePressing 标记）
+    if (
+      this.#mouseHoldArmedButton === 2 &&
+      !this.#mouseHoldMenuFiredWhilePressing &&
+      typeof event.buttons === "number" &&
+      event.buttons === 0
+    ) {
+      this.#handleMouseHoldTakeover();
+      return;
+    }
+    if (this.#mouseHoldTriggered) return;
     const moved =
       Math.abs(event.clientX - this.#mouseHoldStartX) > 6 ||
       Math.abs(event.clientY - this.#mouseHoldStartY) > 6;
@@ -1798,6 +1899,8 @@ export class Translator {
     this.#mouseHoldPreventClickEnabled = false;
     this.#mouseHoldInteractive = false;
     this.#mouseHoldDownTarget = null;
+    this.#mouseHoldRevertContext = null;
+    this.#mouseHoldMenuFiredWhilePressing = false;
     if (this.#mouseHoldSuppressClick) {
       // click 事件在 mouseup 之后同步触发，这里仅作为兜底清理，
       // 避免窗口失焦等场景下标志残留导致下一次点击被误拦截。
@@ -1886,6 +1989,7 @@ export class Translator {
     }
     if (this.#canShowOriginalInHoverBubble(targetNode)) {
       this.#showOriginalHoverBubble(targetNode);
+      this.#rememberMouseHoldRevert("bubble", targetNode, false);
       return true;
     }
     if (!targetNode) return false;
@@ -1902,6 +2006,7 @@ export class Translator {
     if (atomicTarget) {
       if (this.#isHoldTargetAllowed(atomicTarget)) {
         this.#toggleTargetNode(atomicTarget, true, false, generation);
+        this.#rememberMouseHoldRevert("node", atomicTarget, false);
         return true;
       }
       // 原子目标被规则排除时，回退到悬停时登记的容器/原文单元
@@ -1929,26 +2034,22 @@ export class Translator {
       OPT_MOUSE_HOVER_TRANS_AREA;
     if (transMode === OPT_MOUSE_HOVER_TRANS_PARAGRAPH) {
       // 只翻译当前段：与旧版鼠标悬停翻译行为一致
-      this.#toggleTargetNode(
-        targetNode,
-        true,
-        this.#getMouseHoldBlockDisplay(),
-        generation
-      );
+      const blockDisplay = this.#getMouseHoldBlockDisplay();
+      this.#toggleTargetNode(targetNode, true, blockDisplay, generation);
+      this.#rememberMouseHoldRevert("node", targetNode, blockDisplay);
       return true;
     }
 
     const area = this.#findMouseHoverAreaNode(targetNode, transMode);
     if (!area || area === targetNode) {
-      this.#toggleTargetNode(
-        targetNode,
-        true,
-        this.#getMouseHoldBlockDisplay(),
-        generation
-      );
+      const blockDisplay = this.#getMouseHoldBlockDisplay();
+      this.#toggleTargetNode(targetNode, true, blockDisplay, generation);
+      this.#rememberMouseHoldRevert("node", targetNode, blockDisplay);
       return true;
     }
-    return this.#toggleHoverBlock(area, generation);
+    const accepted = this.#toggleHoverBlock(area, generation);
+    if (accepted) this.#rememberMouseHoldRevert("area", area, false);
+    return accepted;
   }
 
   // 查找可作为独立翻译目标的链接/按钮等可交互文字元素。

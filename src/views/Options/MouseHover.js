@@ -152,6 +152,15 @@ export default function MouseHoverSetting() {
     [updateMouseHoverSetting]
   );
 
+  // Revert the translation when the browser (e.g. Edge mouse gestures) takes
+  // over the right-button hold, so a drawn gesture leaves no translation behind.
+  const handleRevertOnGestureChange = useCallback(
+    (checked) => {
+      updateMouseHoverSetting({ mouseHoverHoldRevertOnGesture: checked });
+    },
+    [updateMouseHoverSetting]
+  );
+
   // Normalize the current mouse hover settings.
   const {
     useMouseHover = true,
@@ -162,6 +171,7 @@ export default function MouseHoverSetting() {
     mouseHoverHoldButton = OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT,
     mouseHoverHoldDelay = DEFAULT_MOUSE_HOVER_HOLD_DELAY,
     mouseHoverSuppressContextMenu = true,
+    mouseHoverHoldRevertOnGesture = true,
     mouseHoverTransMode = OPT_MOUSE_HOVER_TRANS_AREA,
     mouseHoverTransDisplay = OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
     mouseHoverPreventClick = false,
@@ -390,6 +400,17 @@ export default function MouseHoverSetting() {
                 disabled={!isRightButtonHold}
                 label={i18n("mousehover_hold_suppress_menu")}
                 onChange={handleSuppressContextMenuChange}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label={i18n("mousehover_hold_revert_on_gesture")}
+              description={i18n("mousehover_hold_revert_on_gesture_helper")}
+            >
+              <SettingsSwitch
+                checked={isRightButtonHold && mouseHoverHoldRevertOnGesture}
+                disabled={!isRightButtonHold}
+                label={i18n("mousehover_hold_revert_on_gesture")}
+                onChange={handleRevertOnGestureChange}
               />
             </SettingsRow>
             <SettingsRow

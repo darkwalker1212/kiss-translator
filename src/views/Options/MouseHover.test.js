@@ -329,4 +329,40 @@ describe("MouseHover settings", () => {
     expect(input.checked).toBe(false);
     view.cleanup();
   });
+
+  test("disables gesture revert outside right-button mode", () => {
+    const view = renderMouseHover({
+      mouseHoverKeyHold: true,
+      mouseHoverHoldButton: "left",
+      mouseHoverHoldRevertOnGesture: true,
+    });
+    const input = view.container.querySelector(
+      "input[aria-label='mousehover_hold_revert_on_gesture']"
+    );
+
+    expect(input.disabled).toBe(true);
+    expect(input.checked).toBe(false);
+    view.cleanup();
+  });
+
+  test("reflects and updates the stored gesture revert value in right-button mode", () => {
+    const view = renderMouseHover({
+      mouseHoverKeyHold: true,
+      mouseHoverHoldButton: "right",
+      mouseHoverHoldRevertOnGesture: true,
+    });
+    const input = view.container.querySelector(
+      "input[aria-label='mousehover_hold_revert_on_gesture']"
+    );
+
+    expect(input.disabled).toBe(false);
+    expect(input.checked).toBe(true);
+
+    act(() => input.click());
+
+    expect(view.updateMouseHoverSetting).toHaveBeenLastCalledWith({
+      mouseHoverHoldRevertOnGesture: false,
+    });
+    view.cleanup();
+  });
 });
