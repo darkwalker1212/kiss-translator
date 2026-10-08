@@ -4888,6 +4888,7 @@ describe("Translator rule styles", () => {
           mouseHoverHoldButton: "right",
           mouseHoverHoldDelay: 300,
           mouseHoverTransMode: "paragraph",
+          mouseHoverHoldRevertOnGesture: true,
         },
       }
     );
@@ -4952,6 +4953,7 @@ describe("Translator rule styles", () => {
           mouseHoverHoldButton: "right",
           mouseHoverHoldDelay: 300,
           mouseHoverTransMode: "paragraph",
+          mouseHoverHoldRevertOnGesture: true,
         },
       }
     );
@@ -4998,54 +5000,58 @@ describe("Translator rule styles", () => {
     ).not.toBeNull();
   });
 
-  test("keeps the translation when the gesture revert option is disabled", async () => {
-    document.body.innerHTML =
-      '<main id="root"><p id="target">Right button target</p></main>';
-    const target = document.getElementById("target");
+  test.each([false, undefined])(
+    "keeps the translation when the gesture revert is not enabled (%s)",
+    async (revertOnGesture) => {
+      document.body.innerHTML =
+        '<main id="root"><p id="target">Right button target</p></main>';
+      const target = document.getElementById("target");
 
-    createTranslator(
-      { transOpen: "false" },
-      {
-        preInit: true,
-        mouseHoverSetting: {
-          useMouseHover: true,
-          mouseHoverKey: [],
-          mouseHoverKey2: [],
-          mouseHoverKeyHold: true,
-          mouseHoverKey2Hold: false,
-          mouseHoverHoldButton: "right",
-          mouseHoverHoldDelay: 300,
-          mouseHoverTransMode: "paragraph",
-          mouseHoverHoldRevertOnGesture: false,
-        },
-      }
-    );
+      createTranslator(
+        { transOpen: "false" },
+        {
+          preInit: true,
+          mouseHoverSetting: {
+            useMouseHover: true,
+            mouseHoverKey: [],
+            mouseHoverKey2: [],
+            mouseHoverKeyHold: true,
+            mouseHoverKey2Hold: false,
+            mouseHoverHoldButton: "right",
+            mouseHoverHoldDelay: 300,
+            mouseHoverTransMode: "paragraph",
+            // undefined = 未配置（默认关闭），false = 显式关闭
+            mouseHoverHoldRevertOnGesture: revertOnGesture,
+          },
+        }
+      );
 
-    await hoverNode(target, 20, 20);
-    target.dispatchEvent(
-      new MouseEvent("mousedown", {
-        bubbles: true,
-        button: 2,
-        clientX: 20,
-        clientY: 20,
-      })
-    );
-    jest.advanceTimersByTime(300);
-    await flushAsync();
-    document.dispatchEvent(
-      new MouseEvent("mousemove", {
-        bubbles: true,
-        buttons: 0,
-        clientX: 80,
-        clientY: 80,
-      })
-    );
-    await flushAsync();
+      await hoverNode(target, 20, 20);
+      target.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 2,
+          clientX: 20,
+          clientY: 20,
+        })
+      );
+      jest.advanceTimersByTime(300);
+      await flushAsync();
+      document.dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+          buttons: 0,
+          clientX: 80,
+          clientY: 80,
+        })
+      );
+      await flushAsync();
 
-    expect(
-      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
-    ).not.toBeNull();
-  });
+      expect(
+        document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+      ).not.toBeNull();
+    }
+  );
 
   test("does not revert while the right button is still reported as held", async () => {
     document.body.innerHTML =
@@ -5161,6 +5167,7 @@ describe("Translator rule styles", () => {
           mouseHoverHoldButton: "right",
           mouseHoverHoldDelay: 300,
           mouseHoverTransMode: "paragraph",
+          mouseHoverHoldRevertOnGesture: true,
         },
       }
     );

@@ -1701,11 +1701,11 @@ export class Translator {
   }
 
   // 右键模式下按住被浏览器手势接管（如 Edge 内置鼠标手势）时是否撤回译文
-  // 键缺失（旧版本升级上来的设置）时沿用默认值 true，与设置界面显示保持一致
+  // 默认关闭：键缺失时按 false 处理，与 DEFAULT_MOUSE_HOVER_SETTING 和设置界面一致
   #shouldRevertOnGesture() {
-    const value =
-      this.#setting.mouseHoverSetting?.mouseHoverHoldRevertOnGesture;
-    return value === undefined ? true : Boolean(value);
+    return Boolean(
+      this.#setting.mouseHoverSetting?.mouseHoverHoldRevertOnGesture
+    );
   }
 
   // 屏蔽原生右键菜单
