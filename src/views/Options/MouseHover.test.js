@@ -3,7 +3,10 @@ import { createRoot } from "react-dom/client";
 import MouseHoverSetting from "./MouseHover";
 import { useMouseHoverSetting } from "../../hooks/MouseHover";
 import { useApiList } from "../../hooks/Api";
-import { DEFAULT_MOUSE_HOVER_HOLD_DELAY } from "../../config";
+import {
+  DEFAULT_MOUSE_HOVER_HOLD_DELAY,
+  DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE,
+} from "../../config";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -194,6 +197,32 @@ describe("MouseHover settings", () => {
 
     expect(view.updateMouseHoverSetting).toHaveBeenLastCalledWith({
       mouseHoverHoldDelay: expected,
+    });
+    view.cleanup();
+  });
+
+  test.each([
+    ["24", 24],
+    ["0", DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE],
+    ["-5", DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE],
+    ["", DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE],
+  ])("normalizes move tolerance input %s to %s", (value, expected) => {
+    const view = renderMouseHover({ mouseHoverKeyHold: true });
+    const input = view.container.querySelector(
+      "input[name='mouseHoverHoldMoveTolerance']"
+    );
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    ).set;
+
+    act(() => {
+      setValue.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(view.updateMouseHoverSetting).toHaveBeenLastCalledWith({
+      mouseHoverHoldMoveTolerance: expected,
     });
     view.cleanup();
   });

@@ -3900,6 +3900,193 @@ describe("Translator rule styles", () => {
     ).toHaveLength(0);
   });
 
+  test("keeps the pending hold when the pointer stays within the move tolerance", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Selectable text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverHoldMoveTolerance: 30,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 约 20.6px：默认容差下会取消，容差调到 30 后应视为手抖。
+    // 真实 mousemove 以元素为目标，这里派发在 target 上（冒泡到 document 捕获监听）
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 0,
+        clientX: 40,
+        clientY: 25,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("cancels the hold when the pointer exceeds the configured move tolerance", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Selectable text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverHoldMoveTolerance: 8,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 0,
+        clientX: 40,
+        clientY: 25,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+
+    expect(
+      document.querySelectorAll(`.${Translator.KISS_CLASS.warpper}`)
+    ).toHaveLength(0);
+  });
+
+  test("measures the move tolerance as true distance rather than per axis", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Selectable text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverHoldMoveTolerance: 10,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 每轴 7px（旧实现按单轴 6px 判定会取消），真实距离约 9.9px < 10px
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 0,
+        clientX: 27,
+        clientY: 27,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
+  test("falls back to the default move tolerance when the value is invalid", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Selectable text</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverHoldDelay: 200,
+          mouseHoverTransMode: "paragraph",
+          mouseHoverHoldMoveTolerance: 0,
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 8px：若 0 被当成容差则会取消；回退到默认 10px 时应照常翻译
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 0,
+        clientX: 28,
+        clientY: 20,
+      })
+    );
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+  });
+
   test("falls back to the default hold delay when mouseHoverHoldDelay is 0", async () => {
     document.body.innerHTML =
       '<main id="root"><p id="target">Hold target</p></main>';

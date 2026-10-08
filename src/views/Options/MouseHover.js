@@ -11,6 +11,7 @@ import {
   DEFAULT_MOUSEHOVER_KEY,
   DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
   DEFAULT_MOUSE_HOVER_HOLD_DELAY,
+  DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE,
   GLOBAL_KEY,
   OPT_MOUSE_HOVER_DISPLAY_BILINGUAL,
   OPT_MOUSE_HOVER_DISPLAY_BUBBLE,
@@ -81,6 +82,20 @@ export default function MouseHoverSetting() {
           Number.isFinite(value) && value > 0
             ? value
             : DEFAULT_MOUSE_HOVER_HOLD_DELAY,
+      });
+    },
+    [updateMouseHoverSetting]
+  );
+
+  // Match the runtime fallback for invalid or non-positive move tolerances.
+  const handleMoveToleranceChange = useCallback(
+    (e) => {
+      const value = Number(e.target.value);
+      updateMouseHoverSetting({
+        mouseHoverHoldMoveTolerance:
+          Number.isFinite(value) && value > 0
+            ? value
+            : DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE,
       });
     },
     [updateMouseHoverSetting]
@@ -170,6 +185,7 @@ export default function MouseHoverSetting() {
     mouseHoverKey2Hold = false,
     mouseHoverHoldButton = OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT,
     mouseHoverHoldDelay = DEFAULT_MOUSE_HOVER_HOLD_DELAY,
+    mouseHoverHoldMoveTolerance = DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE,
     mouseHoverSuppressContextMenu = true,
     mouseHoverHoldRevertOnGesture = true,
     mouseHoverTransMode = OPT_MOUSE_HOVER_TRANS_AREA,
@@ -340,6 +356,26 @@ export default function MouseHoverSetting() {
                 name="mouseHoverHoldDelay"
                 value={mouseHoverHoldDelay}
                 onChange={handleHoldDelayChange}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label={i18n("mousehover_hold_move_tolerance")}
+              description={i18n("mousehover_hold_move_tolerance_helper")}
+            >
+              <TextField
+                hiddenLabel
+                size="small"
+                variant="filled"
+                type="number"
+                inputProps={{
+                  min: 1,
+                  max: 50,
+                  step: 1,
+                  "aria-label": i18n("mousehover_hold_move_tolerance"),
+                }}
+                name="mouseHoverHoldMoveTolerance"
+                value={mouseHoverHoldMoveTolerance}
+                onChange={handleMoveToleranceChange}
               />
             </SettingsRow>
             <SettingsRow

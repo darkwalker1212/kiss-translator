@@ -234,6 +234,7 @@ export const OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK = "block"; // 按住按键译�
 export const OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT = "left"; // 按住触发使用鼠标左键
 export const OPT_MOUSE_HOVER_HOLD_BUTTON_RIGHT = "right"; // 按住触发使用鼠标右键
 export const DEFAULT_MOUSE_HOVER_HOLD_DELAY = 800; // 按住鼠标按键多久后触发悬停翻译 (毫秒)
+export const DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE = 10; // 按住期间允许的鼠标移动距离，超过则取消 (CSS 像素)
 export const DEFAULT_MOUSE_HOVER_BUBBLE_STYLE = `max-width: min(420px, calc(100vw - 32px));
 padding: 10px 12px;
 border-radius: 8px;
@@ -254,6 +255,7 @@ export const DEFAULT_MOUSE_HOVER_SETTING = {
   mouseHoverKey2Hold: false, // 备用触发方式是否使用“按住鼠标按键不放”
   mouseHoverHoldButton: OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT, // 按住触发使用的鼠标按键（左键/右键）
   mouseHoverHoldDelay: DEFAULT_MOUSE_HOVER_HOLD_DELAY, // 按住按键触发翻译的等待时长 (毫秒)
+  mouseHoverHoldMoveTolerance: DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE, // 按住期间允许的鼠标移动距离 (CSS 像素)
   mouseHoverSuppressContextMenu: true, // 右键模式下按住翻译成功后是否屏蔽原生右键菜单
   mouseHoverHoldRevertOnGesture: true, // 右键模式下按住被浏览器手势接管（收不到松开事件）时是否撤回译文
   mouseHoverTransMode: OPT_MOUSE_HOVER_TRANS_AREA, // 按住按键触发的翻译范围

@@ -11,6 +11,7 @@ import {
   OPT_STYLE_NONE,
   DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
   DEFAULT_MOUSE_HOVER_HOLD_DELAY,
+  DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE,
   OPT_HIGHLIGHT_WORDS_BEFORETRANS,
   OPT_HIGHLIGHT_WORDS_AFTERTRANS,
   OPT_MOUSE_HOVER_DISPLAY_BUBBLE,
@@ -1570,6 +1571,16 @@ export class Translator {
       : DEFAULT_MOUSE_HOVER_HOLD_DELAY;
   }
 
+  // 获取按住期间允许的鼠标移动距离 (CSS 像素)：超过即视为拖动/手势并取消触发
+  #getMouseHoldMoveTolerance() {
+    const tolerance = Number(
+      this.#setting.mouseHoverSetting?.mouseHoverHoldMoveTolerance
+    );
+    return Number.isFinite(tolerance) && tolerance > 0
+      ? tolerance
+      : DEFAULT_MOUSE_HOVER_MOVE_TOLERANCE;
+  }
+
   // 按住按键译文是否独立成块显示（默认独立成块，便于长文对照阅读）
   #getMouseHoldBlockDisplay() {
     const display =
@@ -1900,9 +1911,13 @@ export class Translator {
       return;
     }
     if (this.#mouseHoldTriggered) return;
+    // 允许设定范围内的小幅手抖；超过该距离视为拖选/拖动，取消本次触发。
+    // 用真实欧氏距离，和设置里“移动取消距离(像素)”的语义一致
     const moved =
-      Math.abs(event.clientX - this.#mouseHoldStartX) > 6 ||
-      Math.abs(event.clientY - this.#mouseHoldStartY) > 6;
+      Math.hypot(
+        event.clientX - this.#mouseHoldStartX,
+        event.clientY - this.#mouseHoldStartY
+      ) > this.#getMouseHoldMoveTolerance();
     if (moved) this.#cancelMouseHold();
   }
 
