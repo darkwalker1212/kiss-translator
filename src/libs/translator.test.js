@@ -4901,6 +4901,16 @@ describe("Translator rule styles", () => {
         clientY: 20,
       })
     );
+    // 触发前指针已经在移动（8px，仍在容差内）= 本意是拖拽/手势
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 2,
+        button: 2,
+        clientX: 28,
+        clientY: 20,
+      })
+    );
     jest.advanceTimersByTime(300);
     await flushAsync();
     expect(
@@ -4922,6 +4932,70 @@ describe("Translator rule styles", () => {
     expect(
       document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
     ).toBeNull();
+  });
+
+  test("keeps the translation when the pointer only moves after the hold triggered", async () => {
+    document.body.innerHTML =
+      '<main id="root"><p id="target">Right button target</p></main>';
+    const target = document.getElementById("target");
+
+    createTranslator(
+      { transOpen: "false" },
+      {
+        preInit: true,
+        mouseHoverSetting: {
+          useMouseHover: true,
+          mouseHoverKey: [],
+          mouseHoverKey2: [],
+          mouseHoverKeyHold: true,
+          mouseHoverKey2Hold: false,
+          mouseHoverHoldButton: "right",
+          mouseHoverHoldDelay: 300,
+          mouseHoverTransMode: "paragraph",
+        },
+      }
+    );
+
+    await hoverNode(target, 20, 20);
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 20,
+        clientY: 20,
+      })
+    );
+    // 按住不动直到触发：这才是“按住翻译”的本意
+    jest.advanceTimersByTime(300);
+    await flushAsync();
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
+
+    // 看到译文之后才小幅移动，Edge 手势顺手接管了这次松开事件：
+    // 不属于“本意是拖拽/手势”，必须保留译文
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 2,
+        button: 2,
+        clientX: 24,
+        clientY: 20,
+      })
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 0,
+        clientX: 27,
+        clientY: 20,
+      })
+    );
+    await flushAsync();
+
+    expect(
+      document.querySelector(`#target .${Translator.KISS_CLASS.warpper}`)
+    ).not.toBeNull();
   });
 
   test("keeps the translation when the gesture revert option is disabled", async () => {
@@ -5115,6 +5189,16 @@ describe("Translator rule styles", () => {
 
     // 第二次按住：还原（本次按住的改动是把译文移除）
     pressRight();
+    // 触发前的移动 = 本意是拖拽/手势，被接管时才需要撤回
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 2,
+        button: 2,
+        clientX: 28,
+        clientY: 20,
+      })
+    );
     jest.advanceTimersByTime(300);
     await flushAsync();
     expect(wrapper()).toBeNull();
