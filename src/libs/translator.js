@@ -61,6 +61,11 @@ import { isInNonContent, visitTranslationTargets } from "./translationTargets";
 import { normalizeRuleApi } from "./apiSelection";
 import { isSameStorageValue } from "./storageEquality";
 
+// 判定“这次按住在翻译触发前就已经在移动”的最小位移 (CSS 像素)。
+// 用于区分两种按住：一按下就开始移动（本意是拖拽/手势）与按住不动、
+// 看到译文之后才移动（本意就是翻译）。取 3px 以排除像素级抖动噪声。
+const MOUSE_HOLD_MOVING_FLOOR = 3;
+
 /**
  * @class Translator
  * @description 翻译核心逻辑封装
@@ -507,6 +512,7 @@ export class Translator {
   #mouseHoldInteractive = false; // 按住起点是否位于链接/按钮等可交互元素上
   #mouseHoldRevertContext = null; // 本次按住实际切换了什么（用于被浏览器手势接管后反向撤回）
   #mouseHoldMenuFiredWhilePressing = false; // 本次按住期间是否已经弹过原生菜单（按下即弹菜单的平台）
+  #mouseHoldMovedBeforeTrigger = false; // 翻译触发前指针是否已经在移动（本意是拖拽/手势）
   #holdRequestConcurrency = 0; // 按住触发翻译的在途 API 请求数
   #holdRequestWaiters = []; // 等待并发名额的翻译请求
   #holdRequestLimit = 5; // 按住触发翻译的最大并发请求数
@@ -1754,9 +1760,11 @@ export class Translator {
   }
 
   // 这次按住被浏览器接管了（松开事件不会派发，页面只能从事后的 mousemove
-  // 里通过 buttons 得知按键已松开）：撤回译文并结束按住状态
+  // 里通过 buttons 得知按键已松开）：撤回译文并结束按住状态。
+  // 只有“翻译触发前指针已经在移动”的按住才撤回——那种按住的本意是拖拽/手势；
+  // 先按住不动、看到译文之后才开始移动的，说明译文正是用户要的，予以保留。
   #handleMouseHoldTakeover() {
-    if (this.#shouldRevertOnGesture()) {
+    if (this.#shouldRevertOnGesture() && this.#mouseHoldMovedBeforeTrigger) {
       this.#revertMouseHoldTranslation();
     } else {
       this.#mouseHoldRevertContext = null;
@@ -1807,6 +1815,7 @@ export class Translator {
     // 新的一次按下开始，上一轮用于撤回的上下文作废
     this.#mouseHoldRevertContext = null;
     this.#mouseHoldMenuFiredWhilePressing = false;
+    this.#mouseHoldMovedBeforeTrigger = false;
 
     this.#mouseHoldTimer = setTimeout(() => {
       this.#mouseHoldTimer = null;
@@ -1900,6 +1909,15 @@ export class Translator {
       return;
     }
     if (this.#mouseHoldTriggered) return;
+    const distance = Math.hypot(
+      event.clientX - this.#mouseHoldStartX,
+      event.clientY - this.#mouseHoldStartY
+    );
+    // 触发前就已明显移动 = 这次按下的本意是拖拽/手势（而不是按住翻译），
+    // 供“被浏览器手势接管”时判断要不要撤回译文
+    if (distance >= MOUSE_HOLD_MOVING_FLOOR) {
+      this.#mouseHoldMovedBeforeTrigger = true;
+    }
     const moved =
       Math.abs(event.clientX - this.#mouseHoldStartX) > 6 ||
       Math.abs(event.clientY - this.#mouseHoldStartY) > 6;
@@ -1925,6 +1943,7 @@ export class Translator {
     this.#mouseHoldDownTarget = null;
     this.#mouseHoldRevertContext = null;
     this.#mouseHoldMenuFiredWhilePressing = false;
+    this.#mouseHoldMovedBeforeTrigger = false;
     if (this.#mouseHoldSuppressClick) {
       // click 事件在 mouseup 之后同步触发，这里仅作为兜底清理，
       // 避免窗口失焦等场景下标志残留导致下一次点击被误拦截。
