@@ -255,7 +255,7 @@ export const DEFAULT_MOUSE_HOVER_SETTING = {
   mouseHoverHoldButton: OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT, // 按住触发使用的鼠标按键（左键/右键）
   mouseHoverHoldDelay: DEFAULT_MOUSE_HOVER_HOLD_DELAY, // 按住按键触发翻译的等待时长 (毫秒)
   mouseHoverSuppressContextMenu: true, // 右键模式下按住翻译成功后是否屏蔽原生右键菜单
-  mouseHoverHoldRevertOnGesture: true, // 右键模式下按住被浏览器手势接管（收不到松开事件）时是否撤回译文
+  mouseHoverHoldRevertOnGesture: false, // 右键模式下按住被浏览器手势接管（收不到松开事件）时是否撤回译文（默认关闭）
   mouseHoverTransMode: OPT_MOUSE_HOVER_TRANS_AREA, // 按住按键触发的翻译范围
   mouseHoverTransDisplay: OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK, // 按住按键译文显示方式
   mouseHoverPreventClick: false, // 按住链接/按钮翻译后松开是否阻止点击跳转（仅左键模式，默认关闭）

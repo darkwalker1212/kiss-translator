@@ -171,7 +171,7 @@ export default function MouseHoverSetting() {
     mouseHoverHoldButton = OPT_MOUSE_HOVER_HOLD_BUTTON_LEFT,
     mouseHoverHoldDelay = DEFAULT_MOUSE_HOVER_HOLD_DELAY,
     mouseHoverSuppressContextMenu = true,
-    mouseHoverHoldRevertOnGesture = true,
+    mouseHoverHoldRevertOnGesture = false,
     mouseHoverTransMode = OPT_MOUSE_HOVER_TRANS_AREA,
     mouseHoverTransDisplay = OPT_MOUSE_HOVER_TRANS_DISPLAY_BLOCK,
     mouseHoverPreventClick = false,
